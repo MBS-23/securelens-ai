@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { PrefsProvider } from "../src/lib/prefs";
 import type { Me } from "../src/lib/types";
 
 const authState: { me: Me | null } = { me: null };
@@ -28,9 +29,11 @@ const ME: Me = {
 function renderPage() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   return render(
-    <QueryClientProvider client={client}>
-      <Account />
-    </QueryClientProvider>,
+    <PrefsProvider>
+      <QueryClientProvider client={client}>
+        <Account />
+      </QueryClientProvider>
+    </PrefsProvider>,
   );
 }
 

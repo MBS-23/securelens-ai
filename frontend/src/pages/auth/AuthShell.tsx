@@ -1,27 +1,40 @@
-import { CheckCircle2, ShieldCheck } from "lucide-react";
-import type { ReactNode } from "react";
+import { CheckCircle2 } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { BrandMark3D, type MarkAnimation } from "../../components/BrandMark3D";
+import { Logo } from "../../components/Logo";
+import { usePrefs } from "../../lib/prefs";
 
+// Only capabilities that exist today; planned features are not advertised here.
 const POINTS = [
-  "Static analysis with data-flow evidence for 8 languages",
-  "Secrets and dependency checks that never show full secret values",
-  "Vulnerable → Explain → Fix → Retest, verified by a new scan",
-  "AI assistance that is advisory, never authoritative",
+  "Static analysis with data-flow evidence for 8 language families",
+  "Secret and dependency checks that never show full secret values",
+  "Every finding explains why it was reported",
+  "Retests that verify a fix with a new scan",
 ];
 
 export function AuthShell({ title, subtitle, children }: { title: string; subtitle: string; children: ReactNode }) {
+  const { reduceMotion } = usePrefs();
+  // The mark assembles once, then floats and follows the pointer.
+  const [animation, setAnimation] = useState<MarkAnimation>(reduceMotion ? "none" : "loading");
+  useEffect(() => {
+    if (reduceMotion) {
+      setAnimation("none");
+      return;
+    }
+    const timer = window.setTimeout(() => setAnimation("idle"), 900);
+    return () => window.clearTimeout(timer);
+  }, [reduceMotion]);
+
   return (
     <div className="grid min-h-full lg:grid-cols-2">
-      <div className="relative hidden overflow-hidden border-r border-line bg-surface lg:block">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(109,141,255,0.18),transparent_45%),radial-gradient(circle_at_80%_70%,rgba(34,211,166,0.14),transparent_45%)]" />
-        <div className="relative flex h-full flex-col justify-between p-12">
-          <div className="flex items-center gap-3">
-            <ShieldCheck className="h-9 w-9 text-accent-2" />
-            <div>
-              <div className="text-lg font-semibold">SecureLens AI</div>
-              <div className="text-xs text-muted">Application & LLM security testing</div>
-            </div>
+      <div className="hidden border-r border-line bg-surface lg:block">
+        <div className="flex h-full flex-col justify-between p-12">
+          <div>
+            <Logo className="h-10 w-auto" />
+            <div className="mt-2 text-xs tracking-wide text-muted">Scan · Understand · Fix · Verify</div>
           </div>
           <div>
+            <BrandMark3D size={176} animation={animation} interactive={!reduceMotion} label={null} className="mb-10" />
             <h2 className="max-w-md text-3xl font-semibold leading-tight tracking-tight">
               Find it. Understand it. Fix it. <span className="text-accent-2">Prove it.</span>
             </h2>
@@ -41,9 +54,8 @@ export function AuthShell({ title, subtitle, children }: { title: string; subtit
       </div>
       <div className="flex items-center justify-center p-6">
         <div className="w-full max-w-sm">
-          <div className="mb-8 flex items-center gap-2.5 lg:hidden">
-            <ShieldCheck className="h-7 w-7 text-accent-2" />
-            <span className="font-semibold">SecureLens AI</span>
+          <div className="mb-8 lg:hidden">
+            <Logo className="h-8 w-auto" />
           </div>
           <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
           <p className="mt-1 text-sm text-ink-2">{subtitle}</p>

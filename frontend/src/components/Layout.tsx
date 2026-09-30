@@ -18,7 +18,6 @@ import {
   ScanSearch,
   ServerCog,
   Settings,
-  ShieldCheck,
   Sun,
   UserCircle,
   Users,
@@ -28,6 +27,8 @@ import { NavLink, Outlet, useMatch, useNavigate } from "react-router";
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { label } from "../lib/format";
+import { Logo, LogoMark } from "./Logo";
+import { RouteTransition } from "./RouteTransition";
 import { usePrefs } from "../lib/prefs";
 import type { Project } from "../lib/types";
 
@@ -86,13 +87,10 @@ export function Layout() {
   return (
     <div className="flex h-full">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-line bg-surface lg:flex">
-        <div className="flex items-center gap-2.5 px-5 py-5">
-          <ShieldCheck className="h-7 w-7 text-accent-2" />
-          <div>
-            <div className="font-semibold leading-tight">SecureLens AI</div>
-            <div className="text-[11px] text-muted">AppSec · AI security · Secure coding</div>
-          </div>
-        </div>
+        <NavLink to="/" className="block px-5 pt-5 pb-4" aria-label="SecureLens AI — dashboard">
+          <Logo className="h-7 w-auto" />
+          <div className="mt-1.5 text-[11px] tracking-wide text-muted">Scan · Understand · Fix · Verify</div>
+        </NavLink>
         <nav className="flex-1 overflow-y-auto px-3 pb-4 scrollbar-thin">
           <div className="space-y-0.5">
             <Item to="/" end icon={<LayoutDashboard />}>Security dashboard</Item>
@@ -118,7 +116,7 @@ export function Layout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between gap-3 border-b border-line bg-surface/80 px-4 py-2.5 backdrop-blur lg:px-8">
           <div className="flex min-w-0 items-center gap-3">
-            <ShieldCheck className="h-6 w-6 text-accent-2 lg:hidden" />
+            <LogoMark className="h-7 w-7 lg:hidden" />
             {memberships.length > 1 ? (
               <select
                 className="input w-auto py-1.5"
@@ -175,11 +173,11 @@ export function Layout() {
             </button>
           </div>
         </header>
-        <main className="flex-1 overflow-y-auto scrollbar-thin">
+        <RouteTransition>
           <div className="mx-auto w-full max-w-7xl px-4 py-6 lg:px-8 lg:py-8">
             <Outlet />
           </div>
-        </main>
+        </RouteTransition>
       </div>
     </div>
   );

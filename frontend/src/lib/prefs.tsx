@@ -1,13 +1,22 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 /**
- * Per-viewer display preferences: colour theme and Learning vs Professional
- * mode. Stored in localStorage as a convenience only — every read and write is
- * guarded, and the app works the same when storage is unavailable.
+ * Per-viewer display preferences: colour theme, Learning vs Professional mode
+ * and motion. Stored in localStorage as a convenience only — every read and
+ * write is guarded, and the app works the same when storage is unavailable.
  */
 
 export type Theme = "dark" | "light";
 export type Mode = "learning" | "professional";
+export type Motion = "full" | "reduced";
+
+function systemPrefersReducedMotion(): boolean {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
 
 function load<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try {
@@ -33,6 +42,11 @@ interface Prefs {
   setMode: (mode: Mode) => void;
   orgId: string | null;
   setOrgId: (id: string) => void;
+  /** The viewer's choice; "reduced" disables page transitions and the animated mark. */
+  motion: Motion;
+  setMotion: (motion: Motion) => void;
+  /** True when either the viewer or the operating system asks for reduced motion. */
+  reduceMotion: boolean;
 }
 
 const PrefsContext = createContext<Prefs | null>(null);
@@ -50,9 +64,25 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
     }
   });
 
+  // The operating system's reduced-motion setting always wins; this choice can only reduce motion further.
+  const [motion, setMotionState] = useState<Motion>(() => load("sl.motion", ["full", "reduced"] as const, "full"));
+  const [systemReduced, setSystemReduced] = useState(systemPrefersReducedMotion);
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    let query: MediaQueryList;
+    try {
+      query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    } catch {
+      return;
+    }
+    const onChange = () => setSystemReduced(query.matches);
+    query.addEventListener?.("change", onChange);
+    return () => query.removeEventListener?.("change", onChange);
+  }, []);
 
   const setTheme = useCallback((value: Theme) => {
     setThemeState(value);
@@ -66,8 +96,16 @@ export function PrefsProvider({ children }: { children: ReactNode }) {
     setOrgIdState(value);
     save("sl.org", value);
   }, []);
+  const setMotion = useCallback((value: Motion) => {
+    setMotionState(value);
+    save("sl.motion", value);
+  }, []);
 
-  const value = useMemo(() => ({ theme, mode, setTheme, setMode, orgId, setOrgId }), [theme, mode, setTheme, setMode, orgId, setOrgId]);
+  const reduceMotion = motion === "reduced" || systemReduced;
+  const value = useMemo(
+    () => ({ theme, mode, setTheme, setMode, orgId, setOrgId, motion, setMotion, reduceMotion }),
+    [theme, mode, setTheme, setMode, orgId, setOrgId, motion, setMotion, reduceMotion],
+  );
   return <PrefsContext.Provider value={value}>{children}</PrefsContext.Provider>;
 }
 

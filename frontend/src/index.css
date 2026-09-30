@@ -21,6 +21,10 @@
   --pass: #34d399;
   --fail: #ff5d5d;
   --ring: rgba(109, 141, 255, 0.45);
+  /* Wordmark colours (see brand/BRAND.md). Never used to convey severity or status. */
+  --brand-ink: #e8eef9;
+  --brand-accent: #6fa0ff;
+  --brand-rule: #33476b;
   color-scheme: dark;
 }
 
@@ -44,6 +48,9 @@
   --pass: #2b8a3e;
   --fail: #c92a2a;
   --ring: rgba(59, 91, 219, 0.35);
+  --brand-ink: #0b1b36;
+  --brand-accent: #2563eb;
+  --brand-rule: #c9d3e3;
   color-scheme: light;
 }
 
@@ -156,4 +163,149 @@ body {
   .kbd {
     @apply rounded border border-line bg-surface-2 px-1.5 py-0.5 font-mono text-xs;
   }
+}
+
+/* ------------------------------------------------------------------ 3D brand mark
+   Layered SVG planes in a CSS 3D scene (see components/BrandMark3D.tsx).
+   Only transform and opacity animate, so everything runs on the compositor. */
+.sl3d {
+  position: relative;
+  width: var(--size);
+  height: var(--size);
+  perspective: calc(var(--size) * 4);
+}
+.sl3d-tilt,
+.sl3d-motion,
+.sl3d-group {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+}
+.sl3d-tilt {
+  transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transition: transform 0.35s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.sl3d-plane {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  transform: translateZ(calc(var(--z) * var(--d)));
+}
+.sl3d-idle .sl3d-motion { animation: sl3d-float 7s ease-in-out infinite; }
+.sl3d-loading .sl3d-motion { animation: sl3d-sway 1.8s ease-in-out 0.45s infinite alternate; }
+.sl3d-loading .sl3d-upper { animation: sl3d-in-upper 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.sl3d-loading .sl3d-lower { animation: sl3d-in-lower 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) 0.05s both; }
+.sl3d-loading .sl3d-lens { animation: sl3d-in-lens 0.45s cubic-bezier(0.3, 1.4, 0.5, 1) 0.15s both; }
+.sl3d-loading .sl3d-glyphs path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: sl3d-draw 0.35s ease-out 0.3s forwards;
+}
+.sl3d-loading .sl3d-ring {
+  stroke-dasharray: 3.2 1.6;
+  transform-box: view-box;
+  transform-origin: 32px 32px;
+  animation: sl3d-scan 1.4s linear infinite;
+}
+.sl3d-open .sl3d-upper { animation: sl3d-out-upper 0.42s cubic-bezier(0.6, 0, 0.3, 1) forwards; }
+.sl3d-open .sl3d-lower { animation: sl3d-out-lower 0.42s cubic-bezier(0.6, 0, 0.3, 1) forwards; }
+.sl3d-open .sl3d-lens { animation: sl3d-out-lens 0.42s cubic-bezier(0.6, 0, 0.3, 1) forwards; }
+
+@keyframes sl3d-float {
+  0%, 100% { transform: rotateX(10deg) rotateY(-18deg); }
+  50% { transform: rotateX(-8deg) rotateY(18deg); }
+}
+@keyframes sl3d-sway {
+  from { transform: rotateX(8deg) rotateY(-28deg); }
+  to { transform: rotateX(-4deg) rotateY(28deg); }
+}
+@keyframes sl3d-in-upper {
+  from { transform: translate3d(-18%, -22%, calc(var(--d) * 40)) rotateZ(-110deg) scale(0.4); opacity: 0; }
+}
+@keyframes sl3d-in-lower {
+  from { transform: translate3d(18%, 22%, calc(var(--d) * -40)) rotateZ(110deg) scale(0.4); opacity: 0; }
+}
+@keyframes sl3d-in-lens {
+  from { transform: scale(0.2); opacity: 0; }
+}
+@keyframes sl3d-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes sl3d-scan {
+  to { transform: rotate(360deg); }
+}
+@keyframes sl3d-out-upper {
+  to { transform: translate3d(-40%, -45%, 0) rotateZ(-40deg) scale(1.3); opacity: 0; }
+}
+@keyframes sl3d-out-lower {
+  to { transform: translate3d(40%, 45%, 0) rotateZ(40deg) scale(1.3); opacity: 0; }
+}
+@keyframes sl3d-out-lens {
+  60% { opacity: 1; }
+  to { transform: scale(7); opacity: 0; }
+}
+
+/* ------------------------------------------------------------------ page transitions
+   components/RouteTransition.tsx: the mark assembles over the content area while
+   the page loads, then the page opens through the lens (a growing circle). */
+.sl-route {
+  position: relative;
+  flex: 1 1 0%;
+  min-height: 0;
+}
+.sl-route-main {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+}
+.sl-route-main[data-phase="cover"] { visibility: hidden; }
+.sl-route-main[data-phase="open"] { animation: sl-route-reveal 0.42s cubic-bezier(0.6, 0, 0.2, 1) both; }
+.sl-route-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  background: var(--bg);
+}
+.sl-route-overlay[data-phase="open"] {
+  background: transparent;
+  pointer-events: none;
+}
+.sl-route-stage {
+  position: absolute;
+  top: 42%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.sl-route-caption {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0;
+  animation: sl-fade-in 0.3s ease 0.9s forwards;
+}
+.sl-route-overlay[data-phase="open"] .sl-route-caption { display: none; }
+
+@keyframes sl-route-reveal {
+  from { clip-path: circle(0% at 50% 42%); }
+  to { clip-path: circle(150% at 50% 42%); }
+}
+@keyframes sl-fade-in {
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sl3d *,
+  .sl-route-main,
+  .sl-route-caption {
+    animation: none !important;
+    transition: none !important;
+  }
+  .sl-route-caption { opacity: 1; }
 }

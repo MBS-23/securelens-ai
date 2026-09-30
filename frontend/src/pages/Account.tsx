@@ -4,8 +4,47 @@ import { Card, ErrorBox, Field, KeyValue, Notice, PageHeader } from "../componen
 import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { formatDate, label } from "../lib/format";
+import { usePrefs } from "../lib/prefs";
 
 const EMPTY = { current_password: "", new_password: "", confirm: "" };
+
+function Appearance() {
+  const { theme, setTheme, motion, setMotion, reduceMotion } = usePrefs();
+  const systemForcesReduced = reduceMotion && motion === "full";
+  return (
+    <Card title="Appearance">
+      <fieldset className="space-y-2 text-sm">
+        <legend className="label">Theme</legend>
+        {(["dark", "light"] as const).map((value) => (
+          <label key={value} className="flex items-center gap-2">
+            <input type="radio" name="theme" checked={theme === value} onChange={() => setTheme(value)} />
+            {label(value)}
+          </label>
+        ))}
+      </fieldset>
+      <fieldset className="mt-5 space-y-2 text-sm">
+        <legend className="label">Motion</legend>
+        <label className="flex items-start gap-2">
+          <input type="radio" name="motion" className="mt-1" checked={motion === "full"} onChange={() => setMotion("full")} />
+          <span>
+            Full
+            <span className="block text-xs text-muted">Page transitions and the animated SecureLens mark.</span>
+          </span>
+        </label>
+        <label className="flex items-start gap-2">
+          <input type="radio" name="motion" className="mt-1" checked={motion === "reduced"} onChange={() => setMotion("reduced")} />
+          <span>
+            Reduced
+            <span className="block text-xs text-muted">Pages appear immediately; the mark stays still.</span>
+          </span>
+        </label>
+        {systemForcesReduced && (
+          <p className="text-xs text-muted">Your device asks for reduced motion, so animations stay off.</p>
+        )}
+      </fieldset>
+    </Card>
+  );
+}
 
 export default function Account() {
   const { me } = useAuth();
@@ -29,6 +68,9 @@ export default function Account() {
           You are signed in with an API key{me?.api_key_prefix ? ` (${me.api_key_prefix}…)` : ""}. Account settings are
           available only to people signed in with a password.
         </Notice>
+        <div className="mt-6 max-w-xl">
+          <Appearance />
+        </div>
       </>
     );
   }
@@ -119,6 +161,7 @@ export default function Account() {
             </button>
           </form>
         </Card>
+        <Appearance />
       </div>
     </>
   );

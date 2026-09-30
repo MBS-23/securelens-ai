@@ -20,11 +20,18 @@ typography, spacing and alignment; colour carries meaning, not decoration.
 5. **Honest states.** Every screen designs its loading, empty, error, partial
    and success states; empty states say what to do next.
 6. **Purposeful motion only.** Short transitions for focus and disclosure;
-   nothing decorative; `prefers-reduced-motion` removes transitions. 3D is used
-   only when it teaches something (never on the core flows).
+   `prefers-reduced-motion` removes transitions. The one deliberate exception
+   is the brand: the 3D SecureLens mark assembles during page loads and opens
+   into the page (see `brand/BRAND.md` → Motion and 3D). It never delays content
+   beyond real loading plus 240 ms, and users can switch it off. Other 3D is used
+   only when it teaches something.
 
 Explicitly avoided: gradients, glassmorphism, neon, glowing borders, heavy
-shadows, oversized radii, decorative illustrations in work surfaces.
+shadows, oversized radii, decorative illustrations in work surfaces. (The brand
+mark keeps its own tonal depth; it is not a surface style.)
+
+Brand: `brand/BRAND.md` (mark, lockups, colours, motion). Target flows:
+`UX_REFERENCE.md` (the product owner's mockup, reference only).
 
 ## 2. Typography
 

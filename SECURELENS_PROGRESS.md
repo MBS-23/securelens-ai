@@ -1,6 +1,6 @@
 # SecureLens AI — Progress and Continuation Record
 
-Last updated: 2026-09-30 · Branch: `claude/keen-brahmagupta-n4am7q` · Last commit audited: `afc5425`
+Last updated: 2026-09-30 (after the brand and transition work) · Branch: `claude/keen-brahmagupta-n4am7q` · Audit baseline: `afc5425`
 
 **Start every session here.** Read, in order: `SECURELENS_MASTER_SPEC.md` (what to build, verbatim),
 `SECURELENS_EXECUTION_PROTOCOL.md` (how to work), this file (where things stand), `README.md`,
@@ -174,6 +174,8 @@ that loop.
 | D4 | LEARNER is the lowest-ranked role; every role can learn and practise | Learners should not see organization projects unless added to them |
 | D5 | The product owner's spec and protocol are stored verbatim in the repository | Continuity across sessions without reinterpretation |
 | D6 | Keep schema-only tables for planned features; never surface them until implemented | Avoids churn in migrations; no fake features |
+| D7 | Brand mark = "Concept 3" (S ribbon around a lens holding `</>`), generated from geometry; the dashboard renders it in 3D (layered SVG + CSS 3D, no WebGL) as the page-transition loader: assemble while loading, open into the page | Product owner's choice; CSS 3D renders instantly (a loader must not wait for a 3D engine); the mark is the only element with depth, motion is capped (real loading + 240 ms) and can be switched off |
+| D8 | The product owner's 15-screen mockup is a reference for flow and layout only (`docs/UX_REFERENCE.md`); its numbers are placeholders and nothing in it counts as implemented | Owner's instruction; keeps "no fake completion" |
 
 ## 3. In-progress work (not committed)
 
@@ -235,7 +237,24 @@ All 56 frontend call sites (54 JSON calls, 1 upload, 1 report download link) tar
 Added: `SECURELENS_MASTER_SPEC.md`, `SECURELENS_EXECUTION_PROTOCOL.md`, `SECURELENS_PROGRESS.md`,
 `README.md` (all at `securelens-ai/`). No product code changed.
 
-## 8. Next phase
+## 8. Updates since the audit (same day)
+
+| Change | Evidence |
+|---|---|
+| Frontend stabilised and committed (`1aa80ae`): missing Account/NotFound pages, Tailwind 4 build fix, accessible field hints, field-level validation messages, safe post-login redirect | `tsc` clean; production build passes |
+| Brand identity: Concept 3 mark, lockups, app icon, favicon/touch/PWA icons, generator scripts, `brand/BRAND.md` | `brand/`, `frontend/public/` |
+| 3D animated mark (`BrandMark3D`) and page transitions (`RouteTransition`: cover while the page loads, then open through the lens), motion preference in Account → Appearance, OS reduced-motion respected | unit + E2E tests below |
+| Generic shield icon replaced; sign-in page no longer advertises unbuilt AI features; decorative gradient removed | — |
+| UX reference recorded (`docs/UX_REFERENCE.md`, mockup image in `docs/reference/`) with implemented/partial/planned per screen | — |
+| Live walkthrough: full stack (API, sandboxed worker, dashboard) on a fresh database; scanned `examples/vulnerable-shop` (87 open findings: 29 critical, 41 high, 17 medium) and the retest demo (14 → 13 resolved, 1 still open, 1 new) | video and screenshots sent to the product owner |
+
+Tests now: backend 292 passed (audit run); frontend 28 unit tests and 5 Playwright E2E tests passed
+(setup, account, password change, not-found, logo transition with and without reduced motion).
+
+Seen in the live run and still open: finding pages show "A03:2021 Injection" without an edition label —
+fixed by the stashed taxonomy work (§3), which is the next item.
+
+## 9. Next phase
 
 Phase 1 — Stabilisation: frontend build + test setup + commit; resume and finish the stashed taxonomy and
 evidence work; CI workflow. Then Phase 2 — authentication.

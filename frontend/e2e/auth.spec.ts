@@ -72,3 +72,24 @@ test("unknown pages show a not-found page inside the app", async ({ page }) => {
   await page.getByRole("link", { name: "Go to the dashboard" }).click();
   await expect(page).toHaveURL(/\/$/);
 });
+
+test("page changes play the logo transition, and reduced motion turns it off", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill(OWNER.email);
+  await page.getByLabel("Password").fill(NEW_PASSWORD);
+  await page.getByRole("button", { name: /sign in/i }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByTestId("route-transition")).toHaveCount(0);
+
+  await page.getByRole("navigation").getByRole("link", { name: "Projects", exact: true }).click();
+  await expect(page.getByTestId("route-transition")).toBeVisible();
+  await expect(page.getByTestId("route-transition")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+  await page.getByRole("navigation").getByRole("link", { name: "Security dashboard", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Security dashboard" })).toBeVisible();
+  await expect(page.getByTestId("route-transition")).toHaveCount(0);
+});
