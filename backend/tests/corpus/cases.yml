@@ -1,0 +1,1274 @@
+# Scanner regression corpus: for every language and vulnerability category a
+# vulnerable example (must be detected) and a safe example (must not be).
+#
+#   expect: classes that must be reported
+#   min_confidence: lowest acceptable confidence for the expected classes
+#   absent: classes that must NOT be reported
+#
+# Secrets are exercised in test_secrets.py with values generated at runtime, so
+# no credential-like strings live in the repository.
+
+# ============================================================== Python
+- id: py-sqli-vuln
+  file: app.py
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    from flask import Flask, request
+    import sqlite3
+    app = Flask(__name__)
+    @app.route("/user")
+    def user():
+        user_id = request.args["id"]
+        query = "SELECT * FROM users WHERE id=" + user_id
+        cursor = sqlite3.connect("db").cursor()
+        cursor.execute(query)
+        return "ok"
+- id: py-sqli-safe
+  file: app.py
+  absent: [sql_injection]
+  code: |
+    from flask import Flask, request
+    import sqlite3
+    app = Flask(__name__)
+    @app.route("/user")
+    def user():
+        user_id = request.args["id"]
+        cursor = sqlite3.connect("db").cursor()
+        cursor.execute("SELECT * FROM users WHERE id=?", (user_id,))
+        return "ok"
+- id: py-sqli-typed-param-safe
+  file: api.py
+  absent: [sql_injection]
+  code: |
+    from fastapi import FastAPI
+    app = FastAPI()
+    @app.get("/items/{item_id}")
+    def item(item_id: int):
+        cursor.execute(f"SELECT * FROM items WHERE id = {item_id}")
+- id: py-sqli-interprocedural
+  file: app.py
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    from flask import request
+    def find(name):
+        return db.execute("SELECT * FROM users WHERE name = '%s'" % name)
+    @app.route("/find")
+    def view():
+        return find(request.args.get("name"))
+- id: py-cmdi-vuln
+  file: tools.py
+  expect: [command_injection]
+  min_confidence: HIGH
+  code: |
+    import subprocess
+    from flask import request
+    @app.post("/ping")
+    def ping():
+        return subprocess.check_output("ping -c 1 " + request.form["host"], shell=True)
+- id: py-cmdi-safe
+  file: tools.py
+  absent: [command_injection]
+  code: |
+    import subprocess
+    from flask import request
+    @app.post("/ping")
+    def ping():
+        return subprocess.check_output(["ping", "-c", "1", request.form["host"]])
+- id: py-path-vuln
+  file: files.py
+  expect: [path_traversal]
+  code: |
+    import os
+    from flask import request
+    @app.route("/download")
+    def download():
+        return open(os.path.join("/srv/files", request.args["name"])).read()
+- id: py-path-safe
+  file: files.py
+  absent: [path_traversal]
+  code: |
+    import os
+    from flask import request
+    @app.route("/download")
+    def download():
+        return open(os.path.join("/srv/files", os.path.basename(request.args["name"]))).read()
+- id: py-ssrf-vuln
+  file: fetch.py
+  expect: [ssrf]
+  code: |
+    import requests
+    from flask import request
+    @app.route("/preview")
+    def preview():
+        return requests.get(request.args["url"], timeout=5).text
+- id: py-ssrf-safe
+  file: fetch.py
+  absent: [ssrf]
+  code: |
+    import requests
+    ALLOWED = "https://api.example.com/status"
+    def status():
+        return requests.get(ALLOWED, timeout=5).text
+- id: py-xss-vuln
+  file: views.py
+  expect: [xss]
+  code: |
+    from flask import request
+    @app.route("/hello")
+    def hello():
+        return "<h1>Hello " + request.args.get("name", "") + "</h1>"
+- id: py-xss-safe
+  file: views.py
+  absent: [xss]
+  code: |
+    from flask import request
+    from markupsafe import escape
+    @app.route("/hello")
+    def hello():
+        return "<h1>Hello " + escape(request.args.get("name", "")) + "</h1>"
+- id: py-deser-vuln
+  file: load.py
+  expect: [insecure_deserialization]
+  min_confidence: HIGH
+  code: |
+    import pickle
+    from flask import request
+    @app.post("/load")
+    def load():
+        return str(pickle.loads(request.data))
+- id: py-deser-safe
+  file: load.py
+  absent: [insecure_deserialization]
+  code: |
+    import json
+    from flask import request
+    @app.post("/load")
+    def load():
+        return str(json.loads(request.data))
+- id: py-yaml-vuln
+  file: cfg.py
+  expect: [insecure_deserialization]
+  code: |
+    import yaml
+    def read(path):
+        return yaml.load(open(path))
+- id: py-yaml-safe
+  file: cfg.py
+  absent: [insecure_deserialization]
+  code: |
+    import yaml
+    def read(path):
+        return yaml.safe_load(open(path))
+- id: py-crypto-vuln
+  file: auth.py
+  expect: [weak_cryptography]
+  code: |
+    import hashlib
+    def store(password):
+        return hashlib.md5(password.encode()).hexdigest()
+- id: py-crypto-safe
+  file: auth.py
+  absent: [weak_cryptography]
+  code: |
+    import hashlib
+    def checksum(data):
+        return hashlib.sha256(data).hexdigest()
+- id: py-random-vuln
+  file: tokens.py
+  expect: [weak_randomness]
+  code: |
+    import random
+    def make():
+        reset_token = random.randint(100000, 999999)
+        return reset_token
+- id: py-random-safe
+  file: tokens.py
+  absent: [weak_randomness]
+  code: |
+    import secrets
+    def make():
+        reset_token = secrets.token_urlsafe(32)
+        return reset_token
+- id: py-tls-vuln
+  file: client.py
+  expect: [insecure_tls]
+  code: |
+    import requests
+    def call():
+        return requests.get("https://internal.example", verify=False)
+- id: py-tls-safe
+  file: client.py
+  absent: [insecure_tls]
+  code: |
+    import requests
+    def call():
+        return requests.get("https://internal.example", verify="/etc/ssl/ca.pem")
+- id: py-eval-vuln
+  file: calc.py
+  expect: [code_injection]
+  min_confidence: HIGH
+  code: |
+    from flask import request
+    @app.route("/calc")
+    def calc():
+        return str(eval(request.args["expr"]))
+- id: py-eval-safe
+  file: calc.py
+  absent: [code_injection]
+  code: |
+    import ast
+    from flask import request
+    @app.route("/calc")
+    def calc():
+        return str(ast.literal_eval(request.args["expr"]))
+- id: py-debug-vuln
+  file: run.py
+  expect: [dangerous_api]
+  code: |
+    from flask import Flask
+    app = Flask(__name__)
+    app.run(debug=True)
+- id: py-jwt-vuln
+  file: token.py
+  expect: [insecure_authentication]
+  code: |
+    import jwt
+    def claims(token):
+        return jwt.decode(token, options={"verify_signature": False})
+- id: py-jwt-safe
+  file: token.py
+  absent: [insecure_authentication]
+  code: |
+    import jwt
+    def claims(token, key):
+        return jwt.decode(token, key, algorithms=["HS256"])
+- id: py-redirect-vuln
+  file: login.py
+  expect: [open_redirect]
+  code: |
+    from flask import request, redirect
+    @app.route("/login")
+    def login():
+        return redirect(request.args["next"])
+- id: py-idor-vuln
+  file: orders.py
+  expect: [broken_authorization]
+  code: |
+    from flask import request
+    @app.route("/order")
+    def order():
+        return Order.query.get(request.args["id"])
+- id: py-idor-safe
+  file: orders.py
+  absent: [broken_authorization]
+  code: |
+    from flask import request
+    from flask_login import current_user
+    @app.route("/order")
+    def order():
+        return Order.query.filter_by(id=request.args["id"], owner_id=current_user.id).first()
+- id: py-ssti-vuln
+  file: tpl.py
+  expect: [template_injection]
+  code: |
+    from flask import request, render_template_string
+    @app.route("/t")
+    def t():
+        return render_template_string("Hi " + request.args["name"])
+- id: py-ai-prompt-vuln
+  file: bot.py
+  expect: [prompt_injection]
+  code: |
+    from flask import request
+    from openai import OpenAI
+    client = OpenAI()
+    @app.post("/ask")
+    def ask():
+        persona = request.json["persona"]
+        messages = [{"role": "system", "content": "You are " + persona},
+                    {"role": "user", "content": request.json["q"]}]
+        return client.chat.completions.create(model="m", messages=messages)
+- id: py-ai-prompt-safe
+  file: bot.py
+  absent: [prompt_injection]
+  code: |
+    from flask import request
+    from openai import OpenAI
+    client = OpenAI()
+    SYSTEM = "You are a support assistant. Answer only billing questions."
+    @app.post("/ask")
+    def ask():
+        messages = [{"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": request.json["q"]}]
+        return client.chat.completions.create(model="m", messages=messages)
+- id: py-ai-output-vuln
+  file: agent.py
+  expect: [llm_output_handling]
+  code: |
+    from openai import OpenAI
+    client = OpenAI()
+    def run(task):
+        reply = client.chat.completions.create(model="m", messages=[{"role": "user", "content": task}])
+        exec(reply.choices[0].message.content)
+- id: py-ai-tool-vuln
+  file: mcp_server.py
+  expect: [unsafe_tool_input]
+  code: |
+    import subprocess
+    from mcp.server.fastmcp import FastMCP
+    mcp = FastMCP("ops")
+    @mcp.tool()
+    def disk_usage(path: str) -> str:
+        return subprocess.check_output("du -sh " + path, shell=True).decode()
+- id: py-ai-tool-safe
+  file: mcp_server.py
+  absent: [unsafe_tool_input, command_injection]
+  code: |
+    import subprocess
+    from mcp.server.fastmcp import FastMCP
+    mcp = FastMCP("ops")
+    ALLOWED = {"home": "/home", "tmp": "/tmp"}
+    @mcp.tool()
+    def disk_usage(area: str) -> str:
+        return subprocess.check_output(["du", "-sh", ALLOWED.get(area, "/tmp")]).decode()
+- id: py-ai-supply-vuln
+  file: model.py
+  expect: [ai_supply_chain]
+  code: |
+    from transformers import AutoModel
+    model = AutoModel.from_pretrained("org/model", trust_remote_code=True)
+- id: py-ai-agency-vuln
+  file: agent.py
+  expect: [excessive_agency]
+  code: |
+    from langchain_experimental.tools import PythonREPLTool
+    tools = [PythonREPLTool()]
+
+# ========================================================== JavaScript
+- id: js-sqli-vuln
+  file: server.js
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    const express = require("express");
+    const app = express();
+    app.get("/user", (req, res) => {
+      connection.query("SELECT * FROM users WHERE id = " + req.query.id, (err, rows) => res.json(rows));
+    });
+- id: js-sqli-safe
+  file: server.js
+  absent: [sql_injection]
+  code: |
+    const express = require("express");
+    const app = express();
+    app.get("/user", (req, res) => {
+      connection.query("SELECT * FROM users WHERE id = ?", [req.query.id], (err, rows) => res.json(rows));
+    });
+- id: js-sqli-tagged-safe
+  file: db.js
+  absent: [sql_injection]
+  code: |
+    const sql = require("postgres")();
+    async function find(req) {
+      return await sql`SELECT * FROM users WHERE id = ${req.query.id}`;
+    }
+- id: js-cmdi-vuln
+  file: ping.js
+  expect: [command_injection]
+  code: |
+    const { exec } = require("child_process");
+    app.get("/ping", (req, res) => exec("ping -c 1 " + req.query.host));
+- id: js-cmdi-safe
+  file: ping.js
+  absent: [command_injection]
+  code: |
+    const { execFile } = require("child_process");
+    app.get("/ping", (req, res) => execFile("ping", ["-c", "1", req.query.host]));
+- id: js-xss-vuln
+  file: hello.js
+  expect: [xss]
+  code: |
+    app.get("/hello", (req, res) => {
+      res.send(`<h1>Hello ${req.query.name}</h1>`);
+    });
+- id: js-xss-safe
+  file: hello.js
+  absent: [xss]
+  code: |
+    const escapeHtml = require("escape-html");
+    app.get("/hello", (req, res) => {
+      res.send(`<h1>Hello ${escapeHtml(req.query.name)}</h1>`);
+    });
+- id: js-domxss-vuln
+  file: page.js
+  expect: [xss]
+  code: |
+    const name = location.hash.slice(1);
+    document.getElementById("greeting").innerHTML = "Hello " + name;
+- id: js-domxss-safe
+  file: page.js
+  absent: [xss]
+  code: |
+    const name = location.hash.slice(1);
+    document.getElementById("greeting").textContent = "Hello " + name;
+- id: js-path-vuln
+  file: files.js
+  expect: [path_traversal]
+  code: |
+    const path = require("path");
+    app.get("/file", (req, res) => res.sendFile(path.join(__dirname, "files", req.query.name)));
+- id: js-ssrf-vuln
+  file: proxy.js
+  expect: [ssrf]
+  code: |
+    const axios = require("axios");
+    app.get("/proxy", async (req, res) => res.json((await axios.get(req.query.url)).data));
+- id: js-nosql-vuln
+  file: login.js
+  expect: [nosql_injection]
+  code: |
+    app.post("/login", async (req, res) => {
+      const user = await User.findOne({ username: req.body.username, password: req.body.password });
+      res.json({ ok: !!user });
+    });
+- id: js-nosql-safe
+  file: login.js
+  absent: [nosql_injection]
+  code: |
+    app.post("/login", async (req, res) => {
+      const user = await User.findOne({ username: String(req.body.username) });
+      res.json({ ok: !!user });
+    });
+- id: js-proto-vuln
+  file: settings.js
+  expect: [prototype_pollution]
+  code: |
+    const _ = require("lodash");
+    app.post("/settings", (req, res) => { _.merge(defaults, req.body); res.sendStatus(204); });
+- id: js-redos-vuln
+  file: search.js
+  expect: [redos]
+  code: |
+    app.get("/search", (req, res) => res.json(items.filter((i) => new RegExp(req.query.q).test(i))));
+- id: js-redirect-vuln
+  file: login.js
+  expect: [open_redirect]
+  code: |
+    app.get("/login", (req, res) => res.redirect(req.query.next));
+- id: js-jwt-vuln
+  file: auth.js
+  expect: [insecure_authentication]
+  code: |
+    const jwt = require("jsonwebtoken");
+    function verify(token) { return jwt.verify(token, key, { algorithms: ["none", "HS256"] }); }
+- id: js-tls-vuln
+  file: client.js
+  expect: [insecure_tls]
+  code: |
+    const https = require("https");
+    const agent = new https.Agent({ rejectUnauthorized: false });
+- id: js-crypto-vuln
+  file: hash.js
+  expect: [weak_cryptography]
+  code: |
+    const crypto = require("crypto");
+    function hash(password) { return crypto.createHash("md5").update(password).digest("hex"); }
+- id: js-crypto-safe
+  file: hash.js
+  absent: [weak_cryptography]
+  code: |
+    const crypto = require("crypto");
+    function hash(data) { return crypto.createHash("sha256").update(data).digest("hex"); }
+- id: js-random-vuln
+  file: token.js
+  expect: [weak_randomness]
+  code: |
+    function makeToken() { const sessionToken = Math.random().toString(36); return sessionToken; }
+- id: js-random-safe
+  file: token.js
+  absent: [weak_randomness]
+  code: |
+    const crypto = require("crypto");
+    function makeToken() { const sessionToken = crypto.randomBytes(32).toString("hex"); return sessionToken; }
+- id: js-eval-vuln
+  file: calc.js
+  expect: [code_injection]
+  code: |
+    app.get("/calc", (req, res) => res.send(String(eval(req.query.expr))));
+- id: js-llm-xss-vuln
+  file: chat.js
+  expect: [llm_output_handling]
+  code: |
+    import OpenAI from "openai";
+    const client = new OpenAI();
+    export async function show(q) {
+      const r = await client.chat.completions.create({ model: "m", messages: [{ role: "user", content: q }] });
+      document.getElementById("answer").innerHTML = r.choices[0].message.content;
+    }
+- id: js-cross-module-vuln
+  file: routes.js
+  support:
+    - file: repo.js
+      code: |
+        function byName(name) { return pool.query("SELECT * FROM users WHERE name = '" + name + "'"); }
+        module.exports = { byName };
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    const repo = require("./repo");
+    app.get("/users", (req, res) => repo.byName(req.query.name).then((r) => res.json(r)));
+
+# ========================================================== TypeScript
+- id: ts-sqli-vuln
+  file: route.ts
+  expect: [sql_injection]
+  code: |
+    import { Request, Response } from "express";
+    export function getUser(req: Request, res: Response) {
+      const id: string = req.params.id as string;
+      return db.query(`SELECT * FROM users WHERE id = ${id}`);
+    }
+- id: ts-sqli-safe
+  file: route.ts
+  absent: [sql_injection]
+  code: |
+    import { Request, Response } from "express";
+    export function getUser(req: Request, res: Response) {
+      const id: string = req.params.id as string;
+      return db.query("SELECT * FROM users WHERE id = $1", [id]);
+    }
+- id: tsx-dangerous-html-vuln
+  file: Comment.tsx
+  expect: [xss]
+  code: |
+    export function Comment() {
+      const html = new URLSearchParams(window.location.search).get("c") ?? "";
+      return <div dangerouslySetInnerHTML={{ __html: html }} />;
+    }
+- id: tsx-dangerous-html-safe
+  file: Comment.tsx
+  absent: [xss]
+  code: |
+    import DOMPurify from "dompurify";
+    export function Comment() {
+      const html = new URLSearchParams(window.location.search).get("c") ?? "";
+      return <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(html) }} />;
+    }
+- id: ts-ai-browser-key-vuln
+  file: client.ts
+  expect: [sensitive_data_exposure]
+  code: |
+    import OpenAI from "openai";
+    export const client = new OpenAI({ apiKey: import.meta.env.VITE_KEY, dangerouslyAllowBrowser: true });
+- id: ts-ai-tool-vuln
+  file: tools.ts
+  expect: [unsafe_tool_input]
+  code: |
+    import { tool } from "ai";
+    import { execSync } from "child_process";
+    export const shell = tool({
+      description: "Run a diagnostic",
+      execute: async ({ command }: { command: string }) => execSync(command).toString(),
+    });
+
+# ================================================================ PHP
+- id: php-sqli-vuln
+  file: user.php
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    <?php
+    $id = $_GET['id'];
+    $result = mysqli_query($conn, "SELECT * FROM users WHERE id = '$id'");
+- id: php-sqli-safe
+  file: user.php
+  absent: [sql_injection]
+  code: |
+    <?php
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+    $stmt->execute([$_GET['id']]);
+- id: php-sqli-cast-safe
+  file: user.php
+  absent: [sql_injection]
+  code: |
+    <?php
+    $id = (int) $_GET['id'];
+    $result = mysqli_query($conn, "SELECT * FROM users WHERE id = $id");
+- id: php-xss-vuln
+  file: hello.php
+  expect: [xss]
+  code: |
+    <?php
+    echo "<p>Hello " . $_GET['name'] . "</p>";
+- id: php-xss-safe
+  file: hello.php
+  absent: [xss]
+  code: |
+    <?php
+    echo "<p>Hello " . htmlspecialchars($_GET['name'], ENT_QUOTES, 'UTF-8') . "</p>";
+- id: php-short-echo-vuln
+  file: page.php
+  expect: [xss]
+  code: |
+    <html><body><?= $_GET['q'] ?></body></html>
+- id: php-lfi-vuln
+  file: index.php
+  expect: [file_inclusion]
+  code: |
+    <?php
+    include $_GET['page'] . ".php";
+- id: php-lfi-safe
+  file: index.php
+  absent: [file_inclusion]
+  code: |
+    <?php
+    $pages = ['home' => 'home.php', 'about' => 'about.php'];
+    include $pages['home'];
+- id: php-cmdi-vuln
+  file: ping.php
+  expect: [command_injection]
+  code: |
+    <?php
+    system("ping -c 1 " . $_POST['host']);
+- id: php-cmdi-safe
+  file: ping.php
+  absent: [command_injection]
+  code: |
+    <?php
+    system("ping -c 1 " . escapeshellarg($_POST['host']));
+- id: php-backtick-vuln
+  file: ls.php
+  expect: [command_injection]
+  code: |
+    <?php
+    $out = `ls {$_GET['dir']}`;
+- id: php-upload-vuln
+  file: upload.php
+  expect: [unsafe_file_handling]
+  code: |
+    <?php
+    move_uploaded_file($_FILES['f']['tmp_name'], "uploads/" . $_FILES['f']['name']);
+- id: php-upload-safe
+  file: upload.php
+  absent: [unsafe_file_handling]
+  code: |
+    <?php
+    $name = bin2hex(random_bytes(16)) . ".png";
+    move_uploaded_file($_FILES['f']['tmp_name'], "/var/uploads/" . $name);
+- id: php-deser-vuln
+  file: prefs.php
+  expect: [insecure_deserialization]
+  code: |
+    <?php
+    $prefs = unserialize($_COOKIE['prefs']);
+- id: php-deser-safe
+  file: prefs.php
+  absent: [insecure_deserialization]
+  code: |
+    <?php
+    $prefs = json_decode($_COOKIE['prefs'], true);
+- id: php-md5-password-vuln
+  file: register.php
+  expect: [weak_cryptography]
+  code: |
+    <?php
+    $hash = md5($_POST['password']);
+- id: php-password-safe
+  file: register.php
+  absent: [weak_cryptography]
+  code: |
+    <?php
+    $hash = password_hash($_POST['password'], PASSWORD_DEFAULT);
+- id: php-extract-vuln
+  file: vars.php
+  expect: [dangerous_api]
+  code: |
+    <?php
+    extract($_GET);
+- id: php-cross-file-vuln
+  file: index.php
+  support:
+    - file: db.php
+      code: |
+        <?php
+        function find_user($name) {
+            global $conn;
+            return mysqli_query($conn, "SELECT * FROM users WHERE name = '" . $name . "'");
+        }
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    <?php
+    require_once "db.php";
+    find_user($_GET['name']);
+
+# =============================================================== Java
+- id: java-sqli-vuln
+  file: UserServlet.java
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    import java.sql.*;
+    import javax.servlet.http.*;
+    public class UserServlet extends HttpServlet {
+        protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+            String id = req.getParameter("id");
+            Statement st = conn.createStatement();
+            ResultSet rs = st.executeQuery("SELECT * FROM users WHERE id = " + id);
+        }
+    }
+- id: java-sqli-safe
+  file: UserServlet.java
+  absent: [sql_injection]
+  code: |
+    import java.sql.*;
+    import javax.servlet.http.*;
+    public class UserServlet extends HttpServlet {
+        protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws Exception {
+            PreparedStatement ps = conn.prepareStatement("SELECT * FROM users WHERE id = ?");
+            ps.setString(1, req.getParameter("id"));
+            ResultSet rs = ps.executeQuery();
+        }
+    }
+- id: java-spring-sqli-vuln
+  file: UserController.java
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    @RestController
+    public class UserController {
+        @GetMapping("/users")
+        public List<Map<String, Object>> find(@RequestParam String name) {
+            return jdbcTemplate.queryForList("SELECT * FROM users WHERE name = '" + name + "'");
+        }
+    }
+- id: java-cmdi-vuln
+  file: Ping.java
+  expect: [command_injection]
+  code: |
+    public class Ping {
+        void run(javax.servlet.http.HttpServletRequest req) throws Exception {
+            Runtime.getRuntime().exec("ping -c 1 " + req.getParameter("host"));
+        }
+    }
+- id: java-path-vuln
+  file: Files.java
+  expect: [path_traversal]
+  code: |
+    public class Download {
+        byte[] get(javax.servlet.http.HttpServletRequest req) throws Exception {
+            return java.nio.file.Files.readAllBytes(java.nio.file.Paths.get("/data/" + req.getParameter("f")));
+        }
+    }
+- id: java-xxe-vuln
+  file: Parser.java
+  expect: [xxe]
+  code: |
+    import javax.xml.parsers.DocumentBuilderFactory;
+    public class Parser {
+        org.w3c.dom.Document parse(java.io.InputStream in) throws Exception {
+            DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
+            return f.newDocumentBuilder().parse(in);
+        }
+    }
+- id: java-xxe-safe
+  file: Parser.java
+  absent: [xxe]
+  code: |
+    import javax.xml.parsers.DocumentBuilderFactory;
+    public class Parser {
+        org.w3c.dom.Document parse(java.io.InputStream in) throws Exception {
+            DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
+            f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            return f.newDocumentBuilder().parse(in);
+        }
+    }
+- id: java-deser-vuln
+  file: Session.java
+  expect: [insecure_deserialization]
+  code: |
+    import java.io.*;
+    public class Session {
+        Object read(InputStream in) throws Exception {
+            ObjectInputStream ois = new ObjectInputStream(in);
+            return ois.readObject();
+        }
+    }
+- id: java-crypto-vuln
+  file: Hash.java
+  expect: [weak_cryptography]
+  code: |
+    import java.security.MessageDigest;
+    public class Hash {
+        byte[] h(byte[] password) throws Exception { return MessageDigest.getInstance("MD5").digest(password); }
+    }
+- id: java-crypto-safe
+  file: Hash.java
+  absent: [weak_cryptography]
+  code: |
+    import java.security.MessageDigest;
+    public class Hash {
+        byte[] h(byte[] data) throws Exception { return MessageDigest.getInstance("SHA-256").digest(data); }
+    }
+- id: java-ecb-vuln
+  file: Crypto.java
+  expect: [weak_cryptography]
+  code: |
+    import javax.crypto.Cipher;
+    public class Crypto { Cipher c() throws Exception { return Cipher.getInstance("AES"); } }
+- id: java-jndi-vuln
+  file: Lookup.java
+  expect: [jndi_injection]
+  code: |
+    import javax.naming.InitialContext;
+    public class Lookup {
+        Object find(javax.servlet.http.HttpServletRequest req) throws Exception {
+            return new InitialContext().lookup(req.getParameter("name"));
+        }
+    }
+- id: java-ldap-vuln
+  file: Ldap.java
+  expect: [ldap_injection]
+  code: |
+    public class Ldap {
+        void find(javax.servlet.http.HttpServletRequest req) throws Exception {
+            String filter = "(uid=" + req.getParameter("user") + ")";
+            ctx.search("ou=people,dc=example,dc=com", filter, controls);
+        }
+    }
+- id: java-xss-vuln
+  file: Hello.java
+  expect: [xss]
+  code: |
+    public class Hello extends javax.servlet.http.HttpServlet {
+        protected void doGet(javax.servlet.http.HttpServletRequest req, javax.servlet.http.HttpServletResponse resp)
+                throws java.io.IOException {
+            resp.getWriter().println("<h1>Hello " + req.getParameter("name") + "</h1>");
+        }
+    }
+- id: java-xss-safe
+  file: Hello.java
+  absent: [xss]
+  code: |
+    import org.owasp.encoder.Encode;
+    public class Hello extends javax.servlet.http.HttpServlet {
+        protected void doGet(javax.servlet.http.HttpServletRequest req, javax.servlet.http.HttpServletResponse resp)
+                throws java.io.IOException {
+            resp.getWriter().println("<h1>Hello " + Encode.forHtml(req.getParameter("name")) + "</h1>");
+        }
+    }
+
+# ================================================================= C#
+- id: cs-sqli-vuln
+  file: UsersController.cs
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    public class UsersController : ControllerBase {
+        [HttpGet("{name}")]
+        public IActionResult Get(string name) {
+            var cmd = new SqlCommand("SELECT * FROM Users WHERE Name = '" + name + "'", conn);
+            return Ok(cmd.ExecuteScalar());
+        }
+    }
+- id: cs-sqli-safe
+  file: UsersController.cs
+  absent: [sql_injection]
+  code: |
+    public class UsersController : ControllerBase {
+        [HttpGet("{name}")]
+        public IActionResult Get(string name) {
+            var cmd = new SqlCommand("SELECT * FROM Users WHERE Name = @name", conn);
+            cmd.Parameters.AddWithValue("@name", name);
+            return Ok(cmd.ExecuteScalar());
+        }
+    }
+- id: cs-xss-vuln
+  file: View.cs
+  expect: [xss]
+  code: |
+    public class HomeController : Controller {
+        public IActionResult Show(string q) { return Content(Html.Raw(q).ToString()); }
+    }
+- id: cs-cmdi-vuln
+  file: Tools.cs
+  expect: [command_injection]
+  code: |
+    public class ToolsController : ControllerBase {
+        [HttpPost("run")]
+        public IActionResult Run(string target) { Process.Start("cmd.exe", "/c ping " + target); return Ok(); }
+    }
+- id: cs-path-vuln
+  file: Files.cs
+  expect: [path_traversal]
+  code: |
+    public class FilesController : ControllerBase {
+        [HttpGet("file")]
+        public IActionResult Read(string name) { return Ok(System.IO.File.ReadAllText("/data/" + name)); }
+    }
+- id: cs-path-safe
+  file: Files.cs
+  absent: [path_traversal]
+  code: |
+    public class FilesController : ControllerBase {
+        [HttpGet("file")]
+        public IActionResult Read(string name) { return Ok(System.IO.File.ReadAllText("/data/" + Path.GetFileName(name))); }
+    }
+- id: cs-binaryformatter-vuln
+  file: State.cs
+  expect: [insecure_deserialization]
+  code: |
+    public class State { public object Load(Stream s) { return new BinaryFormatter().Deserialize(s); } }
+- id: cs-typename-vuln
+  file: Json.cs
+  expect: [insecure_deserialization]
+  code: |
+    public class Json {
+        public object Parse(string body) {
+            var settings = new JsonSerializerSettings { TypeNameHandling = TypeNameHandling.All };
+            return JsonConvert.DeserializeObject(body, settings);
+        }
+    }
+- id: cs-crypto-vuln
+  file: Hash.cs
+  expect: [weak_cryptography]
+  code: |
+    public class Hash { public byte[] H(byte[] password) { return MD5.Create().ComputeHash(password); } }
+- id: cs-crypto-safe
+  file: Hash.cs
+  absent: [weak_cryptography]
+  code: |
+    public class Hash { public byte[] H(byte[] data) { return SHA256.Create().ComputeHash(data); } }
+- id: cs-ssrf-vuln
+  file: Proxy.cs
+  expect: [ssrf]
+  code: |
+    public class ProxyController : ControllerBase {
+        [HttpGet("proxy")]
+        public async Task<IActionResult> Get(string url) { return Ok(await client.GetStringAsync(url)); }
+    }
+- id: cs-redirect-vuln
+  file: Account.cs
+  expect: [open_redirect]
+  code: |
+    public class AccountController : Controller {
+        public IActionResult Login(string returnUrl) { return Redirect(returnUrl); }
+    }
+- id: cs-redirect-safe
+  file: Account.cs
+  absent: [open_redirect]
+  code: |
+    public class AccountController : Controller {
+        public IActionResult Login(string returnUrl) { return LocalRedirect(returnUrl); }
+    }
+
+# ================================================================= Go
+- id: go-sqli-vuln
+  file: main.go
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    package main
+    import ("database/sql"; "fmt"; "net/http")
+    var db *sql.DB
+    func user(w http.ResponseWriter, r *http.Request) {
+        id := r.URL.Query().Get("id")
+        rows, _ := db.Query(fmt.Sprintf("SELECT * FROM users WHERE id = %s", id))
+        _ = rows
+    }
+- id: go-sqli-safe
+  file: main.go
+  absent: [sql_injection]
+  code: |
+    package main
+    import ("database/sql"; "net/http")
+    var db *sql.DB
+    func user(w http.ResponseWriter, r *http.Request) {
+        rows, _ := db.Query("SELECT * FROM users WHERE id = $1", r.URL.Query().Get("id"))
+        _ = rows
+    }
+- id: go-cmdi-vuln
+  file: main.go
+  expect: [command_injection]
+  code: |
+    package main
+    import ("net/http"; "os/exec")
+    func ping(w http.ResponseWriter, r *http.Request) {
+        out, _ := exec.Command("sh", "-c", "ping -c 1 "+r.FormValue("host")).Output()
+        w.Write(out)
+    }
+- id: go-cmdi-safe
+  file: main.go
+  absent: [command_injection]
+  code: |
+    package main
+    import ("net/http"; "os/exec"; "strconv")
+    func ping(w http.ResponseWriter, r *http.Request) {
+        n, _ := strconv.Atoi(r.FormValue("count"))
+        out, _ := exec.Command("ping", "-c", strconv.Itoa(n), "localhost").Output()
+        _ = out
+    }
+- id: go-path-vuln
+  file: main.go
+  expect: [path_traversal]
+  code: |
+    package main
+    import ("net/http"; "os")
+    func file(w http.ResponseWriter, r *http.Request) {
+        data, _ := os.ReadFile("/srv/files/" + r.URL.Query().Get("name"))
+        _ = data
+    }
+- id: go-path-safe
+  file: main.go
+  absent: [path_traversal]
+  code: |
+    package main
+    import ("net/http"; "os"; "path/filepath")
+    func file(w http.ResponseWriter, r *http.Request) {
+        data, _ := os.ReadFile(filepath.Join("/srv/files", filepath.Base(r.URL.Query().Get("name"))))
+        _ = data
+    }
+- id: go-ssrf-vuln
+  file: main.go
+  expect: [ssrf]
+  code: |
+    package main
+    import "net/http"
+    func fetch(w http.ResponseWriter, r *http.Request) {
+        resp, _ := http.Get(r.FormValue("url"))
+        _ = resp
+    }
+- id: go-xss-vuln
+  file: main.go
+  expect: [xss]
+  code: |
+    package main
+    import "net/http"
+    func hello(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("<h1>Hello " + r.FormValue("name") + "</h1>"))
+    }
+- id: go-xss-safe
+  file: main.go
+  absent: [xss]
+  code: |
+    package main
+    import ("html"; "net/http")
+    func hello(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("<h1>Hello " + html.EscapeString(r.FormValue("name")) + "</h1>"))
+    }
+- id: go-tls-vuln
+  file: client.go
+  expect: [insecure_tls]
+  code: |
+    package main
+    import "crypto/tls"
+    var cfg = &tls.Config{InsecureSkipVerify: true}
+- id: go-tls-safe
+  file: client.go
+  absent: [insecure_tls]
+  code: |
+    package main
+    import "crypto/tls"
+    var cfg = &tls.Config{MinVersion: tls.VersionTLS12}
+- id: go-random-vuln
+  file: token.go
+  expect: [weak_randomness]
+  code: |
+    package main
+    import ("math/rand"; "strconv")
+    func token() string { resetToken := rand.Intn(999999); return strconv.Itoa(resetToken) }
+- id: go-race-vuln
+  file: counter.go
+  expect: [race_condition]
+  code: |
+    package main
+    func count(items []int) int {
+        total := 0
+        for range items {
+            go func() { total++ }()
+        }
+        return total
+    }
+- id: go-race-safe
+  file: counter.go
+  absent: [race_condition]
+  code: |
+    package main
+    import "sync"
+    func count(items []int) int {
+        var mu sync.Mutex
+        total := 0
+        for range items {
+            go func() { mu.Lock(); total++; mu.Unlock() }()
+        }
+        return total
+    }
+- id: go-http-vuln
+  file: server.go
+  expect: [unsafe_http_handling]
+  code: |
+    package main
+    import "net/http"
+    func main() { http.ListenAndServe(":8080", nil) }
+
+# ================================================================== C
+- id: c-bof-vuln
+  file: greet.c
+  expect: [buffer_overflow]
+  min_confidence: HIGH
+  code: |
+    #include <string.h>
+    int main(int argc, char *argv[]) {
+        char name[16];
+        strcpy(name, argv[1]);
+        return 0;
+    }
+- id: c-bof-safe
+  file: greet.c
+  absent: [buffer_overflow]
+  code: |
+    #include <stdio.h>
+    int main(int argc, char *argv[]) {
+        char name[16];
+        snprintf(name, sizeof name, "%s", argv[1]);
+        return 0;
+    }
+- id: c-gets-vuln
+  file: input.c
+  expect: [buffer_overflow]
+  code: |
+    #include <stdio.h>
+    int main(void) { char line[64]; gets(line); return 0; }
+- id: c-scanf-safe
+  file: input.c
+  absent: [buffer_overflow]
+  code: |
+    #include <stdio.h>
+    int main(void) { char word[16]; scanf("%15s", word); return 0; }
+- id: c-fmt-vuln
+  file: log.c
+  expect: [format_string]
+  min_confidence: HIGH
+  code: |
+    #include <stdio.h>
+    int main(int argc, char *argv[]) { printf(argv[1]); return 0; }
+- id: c-fmt-safe
+  file: log.c
+  absent: [format_string]
+  code: |
+    #include <stdio.h>
+    int main(int argc, char *argv[]) { printf("%s", argv[1]); return 0; }
+- id: c-cmdi-vuln
+  file: run.c
+  expect: [command_injection]
+  min_confidence: HIGH
+  code: |
+    #include <stdio.h>
+    #include <stdlib.h>
+    int main(void) {
+        char cmd[128];
+        fgets(cmd, sizeof cmd, stdin);
+        system(cmd);
+        return 0;
+    }
+- id: c-uaf-vuln
+  file: session.c
+  expect: [use_after_free]
+  code: |
+    #include <stdlib.h>
+    struct session { char *name; };
+    void end(struct session *s) {
+        free(s);
+        s->name = 0;
+    }
+- id: c-uaf-safe
+  file: session.c
+  absent: [use_after_free, double_free]
+  code: |
+    #include <stdlib.h>
+    struct session { char *name; };
+    void end(struct session *s) {
+        s->name = 0;
+        free(s);
+        s = NULL;
+    }
+- id: c-double-free-vuln
+  file: buf.c
+  expect: [double_free]
+  code: |
+    #include <stdlib.h>
+    void f(void) { char *p = malloc(8); free(p); free(p); }
+- id: c-oob-vuln
+  file: table.c
+  expect: [out_of_bounds]
+  code: |
+    #include <stdlib.h>
+    int table[10];
+    int main(int argc, char *argv[]) { int i = atoi(argv[1]); table[i] = 1; return 0; }
+- id: c-intoverflow-vuln
+  file: alloc.c
+  expect: [integer_overflow]
+  code: |
+    #include <stdlib.h>
+    int main(int argc, char *argv[]) { size_t n = atoi(argv[1]); int *v = malloc(n * sizeof(int)); return v != 0; }
+- id: c-toctou-vuln
+  file: write.c
+  expect: [race_condition]
+  code: |
+    #include <stdio.h>
+    #include <unistd.h>
+    void save(const char *path) {
+        if (access(path, W_OK) == 0) {
+            FILE *f = fopen(path, "w");
+            fclose(f);
+        }
+    }
+
+# ================================================================ C++
+- id: cpp-bof-vuln
+  file: user.cpp
+  expect: [buffer_overflow]
+  code: |
+    #include <cstring>
+    #include <iostream>
+    int main() {
+        std::string input;
+        std::cin >> input;
+        char name[16];
+        std::strcpy(name, input.c_str());
+        return 0;
+    }
+- id: cpp-bof-safe
+  file: user.cpp
+  absent: [buffer_overflow]
+  code: |
+    #include <iostream>
+    #include <string>
+    int main() {
+        std::string input;
+        std::cin >> input;
+        std::string name = input;
+        return 0;
+    }
+- id: cpp-uaf-vuln
+  file: conn.cpp
+  expect: [use_after_free]
+  code: |
+    struct Conn { void close(); };
+    void finish(Conn *c) { delete c; c->close(); }
+- id: cpp-uaf-safe
+  file: conn.cpp
+  absent: [use_after_free]
+  code: |
+    #include <memory>
+    struct Conn { void close(); };
+    void finish(std::unique_ptr<Conn> c) { c->close(); }
+- id: cpp-cmdi-vuln
+  file: run.cpp
+  expect: [command_injection]
+  code: |
+    #include <cstdlib>
+    #include <iostream>
+    int main() { std::string host; std::cin >> host; std::system(("ping -c 1 " + host).c_str()); return 0; }

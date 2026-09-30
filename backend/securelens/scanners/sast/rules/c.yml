@@ -1,0 +1,264 @@
+# SecureLens SAST rule pack — C and C++ (memory safety, injection, crypto)
+language: c
+memory_model: true
+# argv, stdin and sockets are the attack surface of native programs (setuid tools, daemons).
+high_confidence_kinds: [user_input, http]
+writes_arg0: [sprintf, snprintf, vsprintf, vsnprintf, strcpy, strncpy, strcat, strncat, memcpy, memmove, stpcpy,
+              wcscpy, wcsncpy, strlcpy, strlcat, sscanf]
+
+entry_points:
+  - kind: http_route
+    label: command-line argument
+    source_kind: user_input
+    names: [main, wmain, WinMain]
+    exclude_params: [argc, envp]
+
+sources:
+  - id: c.input.argtaint
+    kind: user_input
+    label: input read from the user, a file or the network
+    match: ["fgets()", "gets()", "gets_s()", "fread()", "read()", "recv()", "recvfrom()", "getline()",
+            "std.getline()", "getdelim()", "fgetws()"]
+    taints_args: [0, 1]
+  - id: c.input.scanf
+    kind: user_input
+    label: formatted input (scanf family)
+    match: ["scanf()", "wscanf()"]
+    taints_args: [1, 2, 3, 4]
+  - id: c.input.fscanf
+    kind: user_input
+    label: formatted input (fscanf/sscanf)
+    match: ["fscanf()", "sscanf()"]
+    taints_args: [2, 3, 4, 5]
+  - id: c.input.return
+    kind: user_input
+    label: environment or user input
+    match: ["getenv()", "secure_getenv()", "std.getenv()", "std.cin.extract()", "std.wcin.extract()",
+            "cin.extract()", "readline()"]
+  - id: c.network
+    kind: http
+    label: network input
+    match: ["mg_get_var()", "evhttp_find_header()", "getenv(QUERY_STRING)", "FCGX_GetParam()"]
+
+sanitizers:
+  - match: ["atoi", "atol", "strtol", "strtoul", "strtoll", "strtod", "std.stoi", "std.stol", "sizeof", "strlen"]
+    classes: [command_injection, format_string, sql_injection, path_traversal, buffer_overflow]
+  - match: ["mysql_real_escape_string", "sqlite3_mprintf", "PQescapeLiteral", "PQescapeStringConn"]
+    classes: [sql_injection]
+  - match: ["basename", "realpath"]
+    classes: [path_traversal]
+
+sinks:
+  - id: SL-C-BOF-001
+    vuln_class: buffer_overflow
+    title: Unbounded copy of untrusted input into a buffer
+    message: strcpy/strcat/sprintf do not check the destination size; attacker-controlled length overflows the buffer
+    severity: CRITICAL
+    match: ["strcpy", "strcat", "wcscpy", "wcscat", "stpcpy", "lstrcpy", "lstrcat", "_mbscpy", "StrCpy", "StrCat"]
+    args: [1]
+    unknown_origin: nonliteral
+    unknown_origin_confidence: MEDIUM
+  - id: SL-C-BOF-002
+    vuln_class: buffer_overflow
+    title: sprintf with untrusted arguments
+    severity: HIGH
+    match: ["sprintf", "vsprintf", "swprintf"]
+    all_args: true
+    source_kinds: [user_input, http]
+  - id: SL-C-OOB-001
+    vuln_class: out_of_bounds
+    title: Memory copy with an untrusted length
+    message: The number of bytes copied comes from input and is not checked against the destination size
+    severity: HIGH
+    match: ["memcpy", "memmove", "strncpy", "strncat", "memset", "wmemcpy", "bcopy"]
+    args: [2]
+    source_kinds: [user_input, http]
+  - id: SL-C-OOB-002
+    vuln_class: out_of_bounds
+    title: Array index derived from untrusted input
+    message: An array is indexed with a value derived from input; no bounds check could be established
+    severity: HIGH
+    confidence: MEDIUM
+    special: subscript_index
+    source_kinds: [user_input, http]
+  - id: SL-C-FMT-001
+    vuln_class: format_string
+    title: Format string controlled by untrusted input
+    message: Passing user data as the format argument lets %n and %x read or write memory
+    severity: CRITICAL
+    match: ["printf", "vprintf", "wprintf", "syslog_format", "err", "warn", "g_print"]
+    args: [0]
+    source_kinds: [user_input, http]
+  - id: SL-C-FMT-002
+    vuln_class: format_string
+    title: Format string controlled by untrusted input
+    severity: CRITICAL
+    match: ["fprintf", "sprintf", "vfprintf", "vsprintf", "dprintf", "syslog", "fwprintf", "asprintf"]
+    args: [1]
+    source_kinds: [user_input, http]
+  - id: SL-C-FMT-003
+    vuln_class: format_string
+    title: Format string controlled by untrusted input
+    severity: CRITICAL
+    match: ["snprintf", "vsnprintf", "swprintf"]
+    args: [2]
+    source_kinds: [user_input, http]
+  - id: SL-C-INT-001
+    vuln_class: integer_overflow
+    title: Allocation size derived from untrusted input
+    message: An attacker-controlled size can overflow the size computation or trigger huge allocations
+    severity: HIGH
+    confidence: MEDIUM
+    match: ["malloc", "calloc", "realloc", "alloca", "new[]", "HeapAlloc", "VirtualAlloc"]
+    all_args: true
+    source_kinds: [user_input, http]
+  - id: SL-C-CMDI-001
+    vuln_class: command_injection
+    title: OS command built from untrusted input
+    severity: CRITICAL
+    match: ["system", "popen", "_popen", "_wsystem", "execl", "execlp", "execle", "execv", "execvp", "execve",
+            "std.system", "ShellExecute", "ShellExecuteA", "WinExec", "CreateProcess", "CreateProcessA"]
+    all_args: true
+    unknown_origin: nonliteral
+    unknown_origin_confidence: MEDIUM
+  - id: SL-C-PATH-001
+    vuln_class: path_traversal
+    title: File path built from untrusted input
+    severity: HIGH
+    match: ["fopen", "open", "openat", "creat", "unlink", "remove", "rename", "access", "stat", "std.ifstream",
+            "std.ofstream", "std.fstream", "ifstream", "ofstream", "CreateFile", "CreateFileA", "_wfopen"]
+    args: [0]
+    source_kinds: [user_input, http]
+  - id: SL-C-SQLI-001
+    vuln_class: sql_injection
+    title: SQL query built from untrusted input
+    severity: CRITICAL
+    match: ["mysql_query", "mysql_real_query", "sqlite3_exec", "sqlite3_prepare", "sqlite3_prepare_v2", "PQexec",
+            "PQsendQuery", "SQLExecDirect"]
+    all_args: true
+    source_kinds: [user_input, http]
+  - id: SL-C-UAF-001
+    vuln_class: use_after_free
+    title: Use of memory after it was freed
+    message: A pointer is used after free/delete, which corrupts memory and can lead to code execution
+    severity: CRITICAL
+    confidence: MEDIUM
+    special: use_after_free
+    cwe: [CWE-416]
+  - id: SL-C-DFREE-001
+    vuln_class: double_free
+    title: Memory freed twice
+    message: Freeing the same pointer twice corrupts the allocator's metadata
+    severity: HIGH
+    confidence: MEDIUM
+    special: double_free
+    cwe: [CWE-415]
+
+checks:
+  - id: SL-C-BOF-003
+    kind: call
+    vuln_class: buffer_overflow
+    title: gets() can never be used safely
+    message: gets() has no length parameter; any input longer than the buffer overflows it. It was removed from C11.
+    severity: CRITICAL
+    confidence: HIGH
+    exploitability: LIKELY
+    match: ["gets", "_getws"]
+    cwe: [CWE-242, CWE-120]
+  - id: SL-C-BOF-004
+    kind: call
+    vuln_class: buffer_overflow
+    title: scanf %s without a field width
+    message: "%s without a width reads unlimited input into a fixed-size buffer; use a width such as %63s"
+    severity: HIGH
+    confidence: HIGH
+    exploitability: LIKELY
+    match: ["scanf", "wscanf"]
+    arg_contains: {0: ["%s", "%["]}
+    cwe: [CWE-120]
+  - id: SL-C-BOF-005
+    kind: call
+    vuln_class: buffer_overflow
+    title: Unbounded string copy
+    message: strcpy/strcat/sprintf do not check the destination size; prefer snprintf, strlcpy or bounded APIs
+    severity: MEDIUM
+    confidence: LOW
+    match: ["strcpy", "strcat", "sprintf", "vsprintf", "wcscpy", "wcscat"]
+    arg_nonliteral: [1]
+    cwe: [CWE-120]
+  - id: SL-C-FMT-004
+    kind: call
+    vuln_class: format_string
+    title: Non-constant format string
+    message: The format argument is not a string literal; if it can contain user data, %n can write memory
+    severity: HIGH
+    confidence: MEDIUM
+    match: ["printf", "vprintf", "wprintf"]
+    arg_nonliteral: [0]
+    cwe: [CWE-134]
+  - id: SL-C-FMT-005
+    kind: call
+    vuln_class: format_string
+    title: Non-constant format string
+    severity: HIGH
+    confidence: MEDIUM
+    match: ["fprintf", "sprintf", "syslog", "vfprintf", "dprintf"]
+    arg_nonliteral: [1]
+    cwe: [CWE-134]
+  - id: SL-C-INT-002
+    kind: call
+    vuln_class: integer_overflow
+    title: Multiplication inside an allocation size
+    message: "malloc(a * b) can overflow and allocate a smaller buffer than intended; use calloc or check for overflow"
+    severity: MEDIUM
+    confidence: LOW
+    match: ["malloc", "realloc", "alloca", "new[]"]
+    arg_binop: {0: ["*"]}
+    cwe: [CWE-190, CWE-680]
+  - id: SL-C-RACE-001
+    kind: sequence
+    vuln_class: race_condition
+    title: Time-of-check to time-of-use (TOCTOU)
+    message: The file is checked with access()/stat() and then opened; an attacker can swap it in between (e.g. with a symlink)
+    severity: MEDIUM
+    confidence: MEDIUM
+    exploitability: POSSIBLE
+    match: ["access", "stat", "lstat", "_access", "faccessat"]
+    then: ["open", "fopen", "creat", "chmod", "chown", "unlink", "rename", "std.ofstream", "std.ifstream"]
+    same_arg: 0
+    cwe: [CWE-367]
+  - id: SL-C-TEMP-001
+    kind: call
+    vuln_class: unsafe_file_handling
+    title: Insecure temporary file name
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["tmpnam", "tempnam", "mktemp", "_mktemp", "tmpnam_r"]
+    cwe: [CWE-377]
+  - id: SL-C-RAND-001
+    kind: call
+    vuln_class: weak_randomness
+    title: rand() used for a security value
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["rand", "random", "srand", "drand48", "lrand48", "std.rand"]
+    assigned_name_regex: "(?i)token|secret|passw|nonce|salt|otp|key|session|csrf|reset|code$|pin$"
+    cwe: [CWE-338]
+  - id: SL-C-CRYPTO-001
+    kind: call
+    vuln_class: weak_cryptography
+    title: Weak hash or cipher (OpenSSL)
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["MD5", "MD5_Init", "SHA1", "SHA1_Init", "EVP_md5", "EVP_sha1", "EVP_des_cbc", "EVP_des_ecb",
+            "EVP_rc4", "EVP_aes_128_ecb", "EVP_aes_256_ecb", "DES_set_key", "DES_ecb_encrypt", "RC4_set_key", "MD4"]
+    cwe: [CWE-327]
+  - id: SL-C-DANGER-001
+    kind: call
+    vuln_class: dangerous_api
+    title: Dangerous string or memory function
+    message: This function is error-prone and banned in many secure coding standards
+    severity: LOW
+    confidence: HIGH
+    match: ["strtok", "strncpy", "wcstok", "alloca", "setjmp", "longjmp"]
+    cwe: [CWE-676]

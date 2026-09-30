@@ -1,0 +1,647 @@
+# SecureLens SAST rule pack — Python
+#
+# Taint rules (sinks) report when data from a source reaches a sink. Checks are
+# structural API-misuse rules. See docs/SCANNER_DEVELOPMENT.md for the format.
+language: python
+
+entry_points:
+  - kind: http_route
+    label: HTTP route parameter
+    source_kind: http
+    decorators: ["*.route", "*.get", "*.post", "*.put", "*.patch", "*.delete", "*.api_route", "*.websocket",
+                 "*.head", "*.options", "api_view", "*.api_view", "require_http_methods", "*.require_http_methods",
+                 "require_POST", "*.require_POST", "require_GET", "*.require_GET"]
+    exclude_params: [self, cls, request, req, db, session, response, background_tasks, current_user, user,
+                     settings, principal, conn, connection, pool, redis, cache, logger, auth, token_data]
+    exclude_annotations: ["Request", "*.Request", "Response", "*.Response", "Session", "*Session", "BackgroundTasks",
+                          "WebSocket", "*.WebSocket", "User", "*User", "Principal", "Settings", "Connection"]
+  - kind: http_route
+    label: HTTP route parameter
+    source_kind: http
+    registrations: ["path", "re_path", "url", "django.urls.path", "django.urls.re_path", "*.add_url_rule",
+                    "*.add_api_route"]
+    require_path_slash: false
+    exclude_params: [self, cls, request, req]
+  - kind: llm_tool
+    label: LLM tool argument
+    source_kind: llm_tool_input
+    decorators: ["tool", "*.tool", "function_tool", "*.function_tool", "*.tool_plain", "kernel_function",
+                 "*.kernel_function", "ai_function", "*.ai_function"]
+    exclude_params: [self, cls, ctx, context, run_context, wrapper]
+
+sources:
+  - id: python.http.request
+    kind: http
+    label: HTTP request data
+    match: ["request.args", "request.form", "request.values", "request.json", "request.get_json()",
+            "request.data", "request.get_data()", "request.cookies", "request.headers", "request.files",
+            "request.view_args", "request.query_string", "request.url", "request.path", "request.full_path",
+            "request.GET", "request.POST", "request.body", "request.COOKIES", "request.META", "request.FILES",
+            "request.query_params", "request.path_params", "request.form()", "request.json()", "request.body()",
+            "request.stream()", "self.request.GET", "self.request.POST", "self.request.body",
+            "self.get_argument()", "self.get_arguments()", "self.get_query_argument()", "self.get_body_argument()",
+            "flask.request.args", "flask.request.form", "flask.request.json", "flask.request.values",
+            "bottle.request.query", "bottle.request.forms"]
+  - id: python.cli.input
+    kind: user_input
+    label: command-line or console input
+    match: ["input()", "raw_input()", "sys.argv", "sys.stdin.read()", "sys.stdin.readline()", "fileinput.input()"]
+  - id: python.llm.output
+    kind: llm_output
+    label: LLM completion output
+    match: ["*.chat.completions.create()", "*.completions.create()", "*.responses.create()", "*.messages.create()",
+            "*.generate_content()", "*.chat.complete()", "*.invoke()", "*.ainvoke()", "*.predict()", "*.apredict()",
+            "*.run_sync()", "litellm.completion()", "litellm.acompletion()", "completion()", "ollama.chat()",
+            "ollama.generate()", "*.create_completion()", "*.create_chat_completion()"]
+  - id: python.rag.retrieval
+    kind: retrieval
+    label: retrieved document content
+    match: ["*.similarity_search()", "*.similarity_search_with_score()", "*.similarity_search_with_relevance_scores()",
+            "*.max_marginal_relevance_search()", "*.get_relevant_documents()", "*.aget_relevant_documents()",
+            "retriever.invoke()", "*.retriever.invoke()", "*.retrieve()", "*.aretrieve()"]
+
+sanitizers:
+  - match: ["int", "float", "bool", "complex", "uuid.UUID", "len", "abs", "round", "ord", "hash", "id",
+            "isinstance", "decimal.Decimal", "Decimal", "datetime.fromisoformat", "*.fromisoformat", "ipaddress.ip_address"]
+    classes: ["*"]
+  - match: ["html.escape", "markupsafe.escape", "escape", "*.escape", "bleach.clean", "*.clean", "cgi.escape",
+            "django.utils.html.escape", "conditional_escape", "*.conditional_escape", "nh3.clean", "strip_tags"]
+    classes: [xss]
+  - match: ["shlex.quote", "pipes.quote", "shlex.join"]
+    classes: [command_injection]
+  - match: ["os.path.basename", "werkzeug.utils.secure_filename", "secure_filename", "*.secure_filename",
+            "pathvalidate.sanitize_filename", "sanitize_filename"]
+    classes: [path_traversal, unsafe_file_handling]
+  - match: ["urllib.parse.quote", "urllib.parse.quote_plus", "quote", "quote_plus"]
+    classes: [xss, command_injection, open_redirect]
+  - match: ["*hash*", "*.hash", "generate_password_hash", "*.generate_password_hash", "make_password",
+            "bcrypt.hashpw", "*.hashpw", "*.encrypt", "*.hash_password", "hash_password"]
+    classes: [plaintext_password]
+  - match: ["url_has_allowed_host_and_scheme", "*.url_has_allowed_host_and_scheme", "is_safe_url", "*.is_safe_url"]
+    classes: [open_redirect]
+
+sinks:
+  # --- injection ------------------------------------------------------------
+  - id: SL-PY-SQLI-001
+    vuln_class: sql_injection
+    title: SQL query built from untrusted input
+    message: A SQL statement is constructed from data that is not a bound parameter
+    severity: CRITICAL
+    match: ["*.execute", "*.executemany", "*.executescript", "*.mogrify", "*.raw", "*.extra",
+            "sqlalchemy.text", "text", "*.exec_driver_sql", "pandas.read_sql", "pd.read_sql", "*.read_sql_query",
+            "*.read_sql"]
+    args: [0]
+    kwargs: [sql, query, statement, operation]
+    unknown_origin: dynamic
+    unknown_origin_confidence: MEDIUM
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  - id: SL-PY-CMDI-001
+    vuln_class: command_injection
+    title: OS command built from untrusted input
+    message: A shell command is executed with data that may contain shell metacharacters
+    severity: CRITICAL
+    match: ["os.system", "os.popen", "os.popen2", "os.popen3", "subprocess.getoutput", "subprocess.getstatusoutput",
+            "commands.getoutput", "commands.getstatusoutput", "os.spawnlp", "os.spawnvp", "os.execl", "os.execlp",
+            "os.execvp", "pty.spawn"]
+    args: [0]
+    unknown_origin: nonliteral
+    unknown_origin_confidence: MEDIUM
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  - id: SL-PY-CMDI-002
+    vuln_class: command_injection
+    title: Subprocess run through the shell with untrusted input
+    message: subprocess is invoked with shell=True, so the argument is interpreted by a shell
+    severity: CRITICAL
+    match: ["subprocess.run", "subprocess.call", "subprocess.Popen", "subprocess.check_output", "subprocess.check_call",
+            "asyncio.create_subprocess_shell"]
+    args: [0]
+    kwargs: [args]
+    when_option: {shell: true}
+    unknown_origin: nonliteral
+    unknown_origin_confidence: MEDIUM
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  - id: SL-PY-CMDI-003
+    vuln_class: command_injection
+    title: Shell command created from untrusted input
+    severity: CRITICAL
+    match: ["asyncio.create_subprocess_shell", "*.create_subprocess_shell"]
+    args: [0]
+    unknown_origin: nonliteral
+    unknown_origin_confidence: MEDIUM
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  - id: SL-PY-CODEI-001
+    vuln_class: code_injection
+    title: Dynamic code execution with untrusted input
+    message: Data is evaluated as Python code
+    severity: CRITICAL
+    match: ["eval", "exec", "compile", "builtins.eval", "builtins.exec", "code.InteractiveInterpreter.runsource",
+            "*.runsource"]
+    args: [0]
+    unknown_origin: nonliteral
+    unknown_origin_confidence: MEDIUM
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  - id: SL-PY-SSTI-001
+    vuln_class: template_injection
+    title: Server-side template rendered from untrusted input
+    message: User-controlled data is used as a template, not as template data
+    severity: HIGH
+    match: ["render_template_string", "flask.render_template_string", "jinja2.Template", "Template",
+            "*.from_string", "mako.template.Template"]
+    args: [0]
+    unknown_origin: dynamic
+    unknown_origin_confidence: LOW
+    remap: {llm_output: llm_output_handling}
+  # --- XSS ------------------------------------------------------------------
+  - id: SL-PY-XSS-001
+    vuln_class: xss
+    title: Untrusted data marked as safe HTML
+    message: Output escaping is bypassed for data that may contain HTML
+    severity: HIGH
+    match: ["markupsafe.Markup", "Markup", "flask.Markup", "django.utils.safestring.mark_safe", "mark_safe",
+            "*.mark_safe", "SafeString", "format_html_join"]
+    args: [0]
+    remap: {llm_output: llm_output_handling}
+  - id: SL-PY-XSS-002
+    vuln_class: xss
+    title: Untrusted data written directly into an HTTP response
+    message: Data is returned as an HTML response body without escaping
+    severity: MEDIUM
+    match: ["HttpResponse", "django.http.HttpResponse", "make_response", "flask.make_response", "HTMLResponse",
+            "*.HTMLResponse"]
+    args: [0]
+    kwargs: [content, response]
+    derived: skip
+    source_kinds: [http, llm_output, retrieval]
+    remap: {llm_output: llm_output_handling}
+  - id: SL-PY-XSS-003
+    vuln_class: xss
+    title: HTML built from untrusted input returned by a route
+    message: A route handler returns HTML markup concatenated with request data without escaping
+    severity: HIGH
+    special: route_return_html
+    derived: skip
+    source_kinds: [http, llm_output, retrieval]
+    remap: {llm_output: llm_output_handling}
+  # --- path traversal / file handling ---------------------------------------
+  - id: SL-PY-PATH-001
+    vuln_class: path_traversal
+    title: File path built from untrusted input
+    message: A filesystem path is derived from user-controlled data without confinement to a base directory
+    severity: HIGH
+    match: ["open", "builtins.open", "io.open", "codecs.open", "os.open", "os.remove", "os.unlink", "os.rmdir",
+            "os.makedirs", "os.mkdir", "os.rename", "os.replace", "os.listdir", "os.scandir", "os.stat", "os.chmod",
+            "shutil.copy", "shutil.copyfile", "shutil.copy2", "shutil.move", "shutil.rmtree", "pathlib.Path",
+            "Path", "send_file", "flask.send_file", "send_from_directory", "flask.send_from_directory",
+            "FileResponse", "*.FileResponse", "static_file", "*.read_text", "*.read_bytes", "*.write_text",
+            "*.write_bytes", "aiofiles.open", "tarfile.open", "zipfile.ZipFile"]
+    args: [0]
+    source_kinds: [http, llm_output, llm_tool_input, retrieval]
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  - id: SL-PY-FILE-001
+    vuln_class: unsafe_file_handling
+    title: Uploaded file saved under a client-supplied name
+    message: An uploaded file is written to a path derived from its client-provided filename
+    severity: HIGH
+    match: ["*.save"]
+    args: [0]
+    kwargs: [dst]
+    source_kinds: [http]
+  # --- SSRF -----------------------------------------------------------------
+  - id: SL-PY-SSRF-001
+    vuln_class: ssrf
+    title: Server-side request to a URL controlled by the user
+    message: An outbound HTTP request is made to a destination derived from untrusted data
+    severity: HIGH
+    match: ["requests.get", "requests.post", "requests.put", "requests.patch", "requests.delete", "requests.head",
+            "requests.request", "requests.Session.get", "httpx.get", "httpx.post", "httpx.put", "httpx.request",
+            "httpx.stream", "urllib.request.urlopen", "urlopen", "urllib.request.Request", "urllib2.urlopen",
+            "aiohttp.request", "*.get_async", "http.client.HTTPConnection", "http.client.HTTPSConnection",
+            "pycurl.Curl.setopt", "urllib3.request", "*.urlopen"]
+    args: [0]
+    kwargs: [url]
+    source_kinds: [http, llm_output, llm_tool_input, retrieval]
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  - id: SL-PY-SSRF-002
+    vuln_class: ssrf
+    title: Server-side request to a URL controlled by the user
+    message: An HTTP client session requests a destination derived from untrusted data
+    severity: HIGH
+    match: ["session.get", "session.post", "session.request", "client.get", "client.post", "client.request",
+            "*.session.get", "*.session.post", "*.client.get", "*.client.post", "http.get", "http.post"]
+    args: [0]
+    kwargs: [url]
+    source_kinds: [http, llm_tool_input]
+    remap: {llm_tool_input: unsafe_tool_input}
+  # --- deserialization / XML ----------------------------------------------
+  - id: SL-PY-DESER-001
+    vuln_class: insecure_deserialization
+    title: Untrusted data deserialized with an unsafe loader
+    message: Deserializing attacker-controlled data with this API can execute arbitrary code
+    severity: CRITICAL
+    match: ["pickle.loads", "pickle.load", "cPickle.loads", "cPickle.load", "_pickle.loads", "dill.loads", "dill.load",
+            "marshal.loads", "shelve.open", "jsonpickle.decode", "joblib.load", "pandas.read_pickle", "pd.read_pickle",
+            "numpy.load", "np.load", "yaml.unsafe_load", "yaml.full_load"]
+    args: [0]
+    source_kinds: [http, llm_output, llm_tool_input, retrieval, user_input]
+    remap: {llm_output: llm_output_handling}
+  # --- redirects ------------------------------------------------------------
+  - id: SL-PY-REDIRECT-001
+    vuln_class: open_redirect
+    title: Redirect to a URL controlled by the user
+    message: The redirect destination is taken from untrusted input without validating it against an allow-list
+    severity: MEDIUM
+    match: ["redirect", "flask.redirect", "django.shortcuts.redirect", "HttpResponseRedirect", "RedirectResponse",
+            "*.RedirectResponse", "bottle.redirect"]
+    args: [0]
+    kwargs: [url, location]
+    source_kinds: [http]
+  # --- authorization ------------------------------------------------------
+  - id: SL-PY-AUTHZ-001
+    vuln_class: broken_authorization
+    title: Record fetched by a client-supplied identifier without an ownership check
+    message: An object is loaded using an identifier from the request and the handler does not reference the current user, which may allow insecure direct object references (IDOR)
+    severity: MEDIUM
+    confidence: LOW
+    match: ["*.objects.get", "*.objects.filter", "*.query.get", "*.query.get_or_404", "*.query.filter_by",
+            "get_object_or_404", "*.get_object_or_404", "*.session.get", "session.get", "db.get", "*.find_one"]
+    all_args: true
+    kwargs: [id, pk, uuid, user_id, account_id, order_id, ident]
+    source_kinds: [http]
+    unless_function_mentions: ["current_user", "request.user", "g.user", "flask_login.current_user",
+                               "get_current_user", "*.get_current_user", "login_required", "*.login_required",
+                               "permission_required", "*.permission_required", "user_passes_test",
+                               "has_permission", "check_permission", "authorize", "*.has_perm", "owner",
+                               "*.owner_id", "*.owner", "principal", "*.user_id"]
+  # --- authentication -------------------------------------------------------
+  - id: SL-PY-AUTH-001
+    vuln_class: insecure_authentication
+    title: Password stored or compared without hashing
+    message: A password taken from the request is assigned to a stored field without a password-hashing function
+    severity: HIGH
+    assign: ["*.password", "*.passwd", "*.user_password", "*.pwd"]
+    source_kinds: [http]
+    cwe: [CWE-256]
+  # --- AI application security ------------------------------------------
+  - id: SL-PY-AI-PROMPT-001
+    vuln_class: prompt_injection
+    title: Untrusted input placed in LLM system instructions
+    message: Data that users or retrieved documents control is concatenated into the system/developer instructions, so it can override the application's intended behaviour
+    severity: HIGH
+    special: role_message
+    source_kinds: [http, user_input, retrieval, llm_tool_input]
+    remap: {retrieval: rag_prompt_injection}
+  - id: SL-PY-AI-PROMPT-002
+    vuln_class: prompt_injection
+    title: Untrusted input passed as the system prompt
+    message: A system prompt parameter is built from untrusted data
+    severity: HIGH
+    match: ["*.messages.create", "*.responses.create", "SystemMessage", "*.SystemMessage",
+            "SystemMessagePromptTemplate.from_template", "*.SystemMessagePromptTemplate.from_template", "Agent",
+            "*.Agent", "*.GenerativeModel", "GenerativeModel"]
+    args: []
+    kwargs: [system, instructions, system_prompt, system_instruction, content]
+    source_kinds: [http, user_input, retrieval, llm_tool_input]
+    remap: {retrieval: rag_prompt_injection}
+
+checks:
+  # --- weak cryptography ------------------------------------------------
+  - id: SL-PY-CRYPTO-001
+    kind: call
+    vuln_class: weak_cryptography
+    title: Weak hash algorithm (MD5/SHA-1)
+    message: MD5 and SHA-1 are not collision resistant and must not protect integrity or passwords
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["hashlib.md5", "hashlib.sha1", "Crypto.Hash.MD5.new", "Crypto.Hash.SHA.new", "MD5.new", "SHA.new",
+            "cryptography.hazmat.primitives.hashes.MD5", "hashes.MD5", "hashes.SHA1"]
+    option_absent_or_not_in: {usedforsecurity: ["False"]}
+    context_regex: "(?i)pass(word|wd)?|pwd|secret|credential"
+    context_severity: HIGH
+    context_cwe: [CWE-916]
+    cwe: [CWE-328]
+  - id: SL-PY-CRYPTO-002
+    kind: call
+    vuln_class: weak_cryptography
+    title: Weak hash algorithm requested by name
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["hashlib.new"]
+    arg_equals: {0: [md5, sha1, md4, "sha-1"]}
+    context_regex: "(?i)pass(word|wd)?|pwd|secret"
+    context_severity: HIGH
+    context_cwe: [CWE-916]
+    cwe: [CWE-328]
+  - id: SL-PY-CRYPTO-003
+    kind: call
+    vuln_class: weak_cryptography
+    title: Broken or weak cipher (DES, 3DES, RC4, Blowfish)
+    severity: HIGH
+    confidence: HIGH
+    match: ["Crypto.Cipher.DES.new", "DES.new", "Crypto.Cipher.DES3.new", "DES3.new", "Crypto.Cipher.ARC4.new",
+            "ARC4.new", "Crypto.Cipher.Blowfish.new", "Blowfish.new", "algorithms.TripleDES", "algorithms.ARC4",
+            "algorithms.Blowfish", "cryptography.hazmat.primitives.ciphers.algorithms.ARC4"]
+    cwe: [CWE-327]
+  - id: SL-PY-CRYPTO-004
+    kind: call
+    vuln_class: weak_cryptography
+    title: Block cipher used in ECB mode
+    message: ECB mode leaks patterns in the plaintext
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["AES.new", "Crypto.Cipher.AES.new", "*.new"]
+    arg_attr: {1: ["MODE_ECB"]}
+    cwe: [CWE-327]
+  - id: SL-PY-CRYPTO-005
+    kind: call
+    vuln_class: weak_cryptography
+    title: Block cipher used in ECB mode
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["modes.ECB", "cryptography.hazmat.primitives.ciphers.modes.ECB"]
+    cwe: [CWE-327]
+  - id: SL-PY-RAND-001
+    kind: call
+    vuln_class: weak_randomness
+    title: Non-cryptographic random generator used for a security value
+    message: The random module is predictable; use the secrets module for tokens, passwords and keys
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["random.random", "random.randint", "random.choice", "random.choices", "random.getrandbits",
+            "random.randrange", "random.sample", "random.uniform", "uuid.uuid1"]
+    assigned_name_regex: "(?i)token|secret|passw|nonce|salt|otp|api_?key|session|csrf|reset|verification|code$|pin$"
+    cwe: [CWE-338]
+  # --- TLS ------------------------------------------------------------------
+  - id: SL-PY-TLS-001
+    kind: call
+    vuln_class: insecure_tls
+    title: TLS certificate verification disabled
+    message: The request does not verify the server certificate, enabling man-in-the-middle attacks
+    severity: HIGH
+    confidence: HIGH
+    match: ["requests.*", "httpx.*", "*.get", "*.post", "*.put", "*.patch", "*.delete", "*.request", "*.head",
+            "*.Client", "*.AsyncClient", "*.Session", "aiohttp.*", "*.urlopen", "*.stream"]
+    option_equals: {verify: false}
+    cwe: [CWE-295]
+  - id: SL-PY-TLS-002
+    kind: call
+    vuln_class: insecure_tls
+    title: Unverified SSL context
+    severity: HIGH
+    confidence: HIGH
+    match: ["ssl._create_unverified_context", "ssl._create_stdlib_context"]
+    cwe: [CWE-295]
+  - id: SL-PY-TLS-003
+    kind: attribute
+    vuln_class: insecure_tls
+    title: Certificate verification or secure protocol disabled
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["ssl.CERT_NONE", "ssl.PROTOCOL_SSLv2", "ssl.PROTOCOL_SSLv3", "ssl.PROTOCOL_TLSv1", "ssl.PROTOCOL_TLSv1_1"]
+    cwe: [CWE-295]
+  - id: SL-PY-TLS-004
+    kind: call
+    vuln_class: insecure_tls
+    title: SSH host key not verified
+    message: AutoAddPolicy accepts any host key, so the server's identity is never checked
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["paramiko.AutoAddPolicy", "AutoAddPolicy", "paramiko.WarningPolicy", "*.AutoAddPolicy"]
+    cwe: [CWE-295]
+  # --- deserialization / XML ----------------------------------------------
+  - id: SL-PY-DESER-002
+    kind: call
+    vuln_class: insecure_deserialization
+    title: yaml.load without a safe loader
+    message: yaml.load with the default or full loader can construct arbitrary Python objects
+    severity: HIGH
+    confidence: HIGH
+    match: ["yaml.load", "yaml.load_all"]
+    option_absent_or_not_in: {Loader: [SafeLoader, CSafeLoader, BaseLoader]}
+    max_args: 1
+    cwe: [CWE-502]
+  - id: SL-PY-DESER-003
+    kind: call
+    vuln_class: insecure_deserialization
+    title: Pickle-based deserialization
+    message: pickle executes code during loading; only load data you produced and protected against tampering
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["pickle.loads", "pickle.load", "cPickle.loads", "cPickle.load", "dill.loads", "dill.load", "shelve.open",
+            "jsonpickle.decode", "marshal.loads"]
+    arg_nonliteral: [0]
+    cwe: [CWE-502]
+  - id: SL-PY-AI-SUPPLY-001
+    kind: call
+    vuln_class: insecure_deserialization
+    title: Model weights loaded with full pickle deserialization
+    message: torch.load without weights_only=True unpickles arbitrary objects from the model file
+    severity: HIGH
+    confidence: HIGH
+    match: ["torch.load"]
+    option_absent_or_not_in: {weights_only: ["True"]}
+    cwe: [CWE-502]
+  - id: SL-PY-XXE-001
+    kind: call
+    vuln_class: xxe
+    title: XML parser resolves external entities
+    severity: HIGH
+    confidence: HIGH
+    match: ["lxml.etree.XMLParser", "etree.XMLParser", "XMLParser"]
+    option_equals: {resolve_entities: true}
+    cwe: [CWE-611]
+  # --- dangerous APIs / misconfiguration ---------------------------------
+  - id: SL-PY-DEBUG-001
+    kind: call
+    vuln_class: dangerous_api
+    title: Web application started in debug mode
+    message: The debug server exposes an interactive debugger that allows code execution
+    severity: HIGH
+    confidence: HIGH
+    match: ["*.run"]
+    option_equals: {debug: true}
+    cwe: [CWE-489]
+  - id: SL-PY-DEBUG-002
+    kind: assign
+    vuln_class: dangerous_api
+    title: Debug mode enabled in configuration
+    severity: MEDIUM
+    confidence: MEDIUM
+    target: ["DEBUG", "*.debug", "*.config[DEBUG]", "app.debug"]
+    value_equals: [true]
+    cwe: [CWE-489]
+  - id: SL-PY-TEMP-001
+    kind: call
+    vuln_class: unsafe_file_handling
+    title: Insecure temporary file creation
+    message: tempfile.mktemp returns a name that another process can claim before it is opened
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["tempfile.mktemp", "os.tempnam", "os.tmpnam"]
+    cwe: [CWE-377]
+  - id: SL-PY-TAR-001
+    kind: call
+    vuln_class: unsafe_file_handling
+    title: Archive extracted without path validation
+    message: Extracting a tar archive without a filter lets entries with ../ or absolute paths write outside the target directory (Zip Slip)
+    severity: HIGH
+    confidence: MEDIUM
+    match: ["*.extractall", "*.extract"]
+    receiver_origin: ["tarfile.open", "tarfile.TarFile", "tarfile.TarFile.open"]
+    option_absent_or_not_in: {filter: ['"data"', "data", "tar_filter", "data_filter"]}
+    cwe: [CWE-22]
+  - id: SL-PY-PERM-001
+    kind: call
+    vuln_class: unsafe_file_handling
+    title: World-writable file permissions
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["os.chmod", "os.fchmod", "*.chmod"]
+    arg_equals: {1: ["511", "0o777", "438", "0o666"]}
+    cwe: [CWE-732]
+  - id: SL-PY-SECRET-001
+    kind: assign
+    vuln_class: hardcoded_secret
+    title: Hardcoded application secret key
+    message: A framework signing key is set to a literal; anyone with the source can forge sessions and tokens
+    severity: HIGH
+    confidence: HIGH
+    target: ["SECRET_KEY", "*.secret_key", "*.config[SECRET_KEY]", "*.config[JWT_SECRET_KEY]", "JWT_SECRET",
+             "JWT_SECRET_KEY", "*.config[SECURITY_PASSWORD_SALT]"]
+    value_literal_min_len: 8
+    cwe: [CWE-798]
+  - id: SL-PY-CORS-001
+    kind: call
+    vuln_class: dangerous_api
+    title: CORS allows any origin together with credentials
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["CORS", "flask_cors.CORS", "*.add_middleware"]
+    option_equals: {supports_credentials: true}
+    option_contains: {origins: "*"}
+    cwe: [CWE-942]
+  - id: SL-PY-CORS-002
+    kind: call
+    vuln_class: dangerous_api
+    title: CORS allows any origin together with credentials
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["*.add_middleware", "CORSMiddleware"]
+    option_equals: {allow_credentials: true}
+    option_contains: {allow_origins: "*"}
+    cwe: [CWE-942]
+  - id: SL-PY-AUTH-002
+    kind: call
+    vuln_class: insecure_authentication
+    title: JWT decoded without signature verification
+    message: The token's signature is not checked, so any client can forge claims
+    severity: HIGH
+    confidence: HIGH
+    match: ["jwt.decode", "*.jwt.decode"]
+    option_equals: {verify: false}
+    cwe: [CWE-347]
+  - id: SL-PY-AUTH-003
+    kind: call
+    vuln_class: insecure_authentication
+    title: JWT decoded without signature verification
+    severity: HIGH
+    confidence: HIGH
+    match: ["jwt.decode", "*.jwt.decode"]
+    option_equals: {verify_signature: false}
+    cwe: [CWE-347]
+  - id: SL-PY-AUTH-004
+    kind: call
+    vuln_class: insecure_authentication
+    title: JWT accepts the "none" algorithm
+    severity: HIGH
+    confidence: HIGH
+    match: ["jwt.decode", "*.jwt.decode"]
+    option_contains: {algorithms: none}
+    cwe: [CWE-347]
+  - id: SL-PY-AUTH-005
+    kind: compare
+    vuln_class: insecure_authentication
+    title: Hardcoded credential in an authentication check
+    message: A password or token is compared with a literal, so the credential is fixed in the source code
+    severity: HIGH
+    confidence: MEDIUM
+    exploitability: LIKELY
+    name_regex: "(?i)^(pass(word|wd)?|pwd|secret|api_?key|token|auth_?token)$"
+    value_literal_min_len: 4
+    cwe: [CWE-798]
+  - id: SL-PY-CSRF-001
+    kind: decorator
+    vuln_class: missing_csrf_protection
+    title: CSRF protection disabled for a view
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["csrf_exempt", "*.csrf_exempt", "*.exempt"]
+    cwe: [CWE-352]
+  - id: SL-PY-COOKIE-001
+    kind: assign
+    vuln_class: insecure_authentication
+    title: Session cookie security flag disabled
+    severity: LOW
+    confidence: HIGH
+    target: ["SESSION_COOKIE_SECURE", "SESSION_COOKIE_HTTPONLY", "CSRF_COOKIE_SECURE", "*.config[SESSION_COOKIE_SECURE]",
+             "*.config[SESSION_COOKIE_HTTPONLY]", "WTF_CSRF_ENABLED", "*.config[WTF_CSRF_ENABLED]"]
+    value_equals: [false]
+    cwe: [CWE-614]
+  - id: SL-PY-ASSERT-001
+    kind: call
+    vuln_class: code_injection
+    title: Unsafe eval or exec of a non-constant string
+    message: eval/exec is called with a value that is not a constant
+    severity: MEDIUM
+    confidence: LOW
+    match: ["eval", "exec"]
+    arg_nonliteral: [0]
+    cwe: [CWE-95]
+  # --- AI application security ------------------------------------------
+  - id: SL-PY-AI-SUPPLY-002
+    kind: call
+    vuln_class: ai_supply_chain
+    title: Remote model code execution enabled
+    message: trust_remote_code=True runs Python code shipped with the model repository
+    severity: HIGH
+    confidence: HIGH
+    match: ["*.from_pretrained", "pipeline", "*.pipeline", "*.load_dataset", "load_dataset", "*.AutoModel*",
+            "SentenceTransformer", "*.SentenceTransformer"]
+    option_equals: {trust_remote_code: true}
+    cwe: [CWE-94]
+  - id: SL-PY-AI-AGENCY-001
+    kind: call
+    vuln_class: excessive_agency
+    title: Agent granted arbitrary code or shell execution
+    message: This tool lets the model execute code or shell commands chosen at runtime
+    severity: HIGH
+    confidence: HIGH
+    match: ["PythonREPLTool", "*.PythonREPLTool", "PythonAstREPLTool", "*.PythonAstREPLTool", "ShellTool",
+            "*.ShellTool", "PythonREPL", "*.PythonREPL", "create_python_agent", "*.create_python_agent"]
+    cwe: [CWE-250]
+  - id: SL-PY-AI-AGENCY-002
+    kind: call
+    vuln_class: excessive_agency
+    title: Dangerous agent capability explicitly enabled
+    severity: HIGH
+    confidence: HIGH
+    match: ["**"]
+    option_equals: {allow_dangerous_code: true}
+    cwe: [CWE-250]
+  - id: SL-PY-AI-AGENCY-003
+    kind: call
+    vuln_class: excessive_agency
+    title: Dangerous agent capability explicitly enabled
+    severity: HIGH
+    confidence: HIGH
+    match: ["**"]
+    option_equals: {allow_dangerous_requests: true}
+    cwe: [CWE-918]
+  - id: SL-PY-AI-AGENCY-004
+    kind: call
+    vuln_class: excessive_agency
+    title: Agent loaded with terminal or code-execution tools
+    severity: HIGH
+    confidence: MEDIUM
+    match: ["load_tools", "*.load_tools"]
+    option_contains: {"*": terminal}
+    cwe: [CWE-250]

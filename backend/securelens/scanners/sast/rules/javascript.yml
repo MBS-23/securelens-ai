@@ -1,0 +1,482 @@
+# SecureLens SAST rule pack — JavaScript and TypeScript (Node.js and browser)
+language: javascript
+
+tagged_template_sanitizes: [sql_injection, xss, nosql_injection]
+
+entry_points:
+  - kind: http_route
+    label: HTTP request
+    source_kind: http
+    registrations: ["*.get", "*.post", "*.put", "*.patch", "*.delete", "*.all", "*.options", "*.head", "*.use",
+                    "*.route"]
+    exclude_params: [res, response, reply, next, h, done, err]
+  - kind: http_route
+    label: HTTP route parameter
+    source_kind: http
+    decorators: ["Get", "Post", "Put", "Patch", "Delete", "All", "*.Get", "*.Post", "*.Put", "*.Patch", "*.Delete"]
+    exclude_params: [res, response, reply, next, user, currentUser, req, request]
+  - kind: llm_tool
+    label: LLM tool argument
+    source_kind: llm_tool_input
+    registrations: ["tool", "*.tool", "*.registerTool", "createTool", "DynamicTool", "DynamicStructuredTool",
+                    "*.DynamicTool", "*.DynamicStructuredTool", "defineTool", "*.addTool"]
+    exclude_params: [context, ctx, extra, options]
+
+sources:
+  - id: js.http.request
+    kind: http
+    label: HTTP request data
+    match: ["req.query", "req.body", "req.params", "req.headers", "req.cookies", "req.signedCookies", "req.files",
+            "req.file", "req.url", "req.originalUrl", "req.path", "req.hostname", "req.get()", "req.header()",
+            "req.param()", "request.query", "request.body", "request.params", "request.headers", "request.cookies",
+            "request.json()", "request.text()", "request.formData()", "request.nextUrl.searchParams",
+            "req.json()", "req.text()", "req.formData()", "req.nextUrl.searchParams", "ctx.query", "ctx.params",
+            "ctx.request.body", "ctx.request.query", "ctx.querystring", "ctx.headers", "ctx.cookies.get()",
+            "event.body", "event.queryStringParameters", "event.pathParameters", "event.headers",
+            "searchParams.get()", "*.searchParams.get()", "formData.get()"]
+  - id: js.dom.input
+    kind: http
+    label: browser-controlled input (URL, storage, messages)
+    match: ["location.search", "location.hash", "location.href", "location.pathname", "window.location.search",
+            "window.location.hash", "window.location.href", "document.location", "document.URL", "document.documentURI",
+            "document.referrer", "window.name", "document.cookie", "localStorage.getItem()", "sessionStorage.getItem()",
+            "window.localStorage.getItem()", "useSearchParams()", "useParams()", "router.query", "$route.query",
+            "$route.params", "event.data", "e.data", "message.data"]
+  - id: js.cli.input
+    kind: user_input
+    label: command-line input
+    match: ["process.argv", "readline.question()", "prompt()"]
+  - id: js.llm.output
+    kind: llm_output
+    label: LLM completion output
+    match: ["*.chat.completions.create()", "*.completions.create()", "*.responses.create()", "*.messages.create()",
+            "generateText()", "generateObject()", "streamText()", "ai.generateText()", "*.generateContent()",
+            "*.invoke()", "*.call()", "ollama.chat()", "ollama.generate()", "*.chat.completions.parse()"]
+  - id: js.rag.retrieval
+    kind: retrieval
+    label: retrieved document content
+    match: ["*.similaritySearch()", "*.similaritySearchWithScore()", "*.getRelevantDocuments()",
+            "retriever.invoke()", "*.retriever.invoke()", "*.maxMarginalRelevanceSearch()"]
+
+sanitizers:
+  - match: ["parseInt", "parseFloat", "Number", "Boolean", "Number.parseInt", "Number.parseFloat", "Math.floor",
+            "Math.round", "Math.abs", "BigInt", "isNaN", "Number.isInteger", "validator.isInt", "validator.isUUID",
+            "*.isUUID", "uuidValidate", "z.number().parse", "Date.parse"]
+    classes: ["*"]
+  - match: ["escape", "escapeHtml", "escape-html", "he.encode", "he.escape", "lodash.escape", "_.escape",
+            "validator.escape", "DOMPurify.sanitize", "*.sanitize", "sanitizeHtml", "sanitize-html", "xss",
+            "xssFilters.inHTMLData", "encodeHTML", "htmlEncode", "*.escapeHTML", "textContent", "createTextNode",
+            "document.createTextNode", "React.createElement"]
+    classes: [xss, llm_output_handling]
+  - match: ["encodeURIComponent", "encodeURI", "querystring.escape"]
+    classes: [xss, open_redirect, command_injection]
+  - match: ["path.basename", "sanitize-filename", "sanitizeFilename", "*.basename"]
+    classes: [path_traversal, unsafe_file_handling]
+  - match: ["mysql.escape", "*.escape", "connection.escape", "pool.escape", "SqlString.escape", "sqlstring.escape",
+            "*.escapeId", "pgFormat", "format.literal", "*.literal"]
+    classes: [sql_injection]
+  - match: ["shellEscape", "shell-escape", "shescape.quote", "*.quote", "shellQuote.quote"]
+    classes: [command_injection]
+  - match: ["String", "*.toString"]
+    classes: [nosql_injection]
+  - match: ["bcrypt.hash", "bcrypt.hashSync", "argon2.hash", "*.hash", "*.hashSync", "crypto.scryptSync", "scrypt",
+            "crypto.pbkdf2Sync", "pbkdf2"]
+    classes: [plaintext_password]
+
+sinks:
+  # --- injection ------------------------------------------------------------
+  - id: SL-JS-SQLI-001
+    vuln_class: sql_injection
+    title: SQL query built from untrusted input
+    message: A SQL statement is constructed from data that is not a bound parameter
+    severity: CRITICAL
+    match: ["*.query", "connection.execute", "conn.execute", "pool.execute", "db.execute", "client.execute",
+            "*.connection.execute", "*.pool.execute", "*.db.execute", "*.raw", "*.whereRaw", "*.orWhereRaw", "*.havingRaw", "*.orderByRaw",
+            "*.joinRaw", "*.selectRaw", "*.$queryRawUnsafe", "*.$executeRawUnsafe", "*.unsafe", "sequelize.query",
+            "db.run", "db.all", "db.get", "db.exec", "db.each", "db.prepare", "*.db.run", "*.db.all", "*.db.get",
+            "*.db.exec", "*.db.prepare", "database.run", "database.all", "database.get", "database.exec",
+            "*.prepare", "*.sql"]
+    args: [0]
+    object_props: [sql, query, text]
+    strings_only: true
+    unknown_origin: dynamic
+    unknown_origin_confidence: MEDIUM
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  - id: SL-JS-NOSQLI-001
+    vuln_class: nosql_injection
+    title: NoSQL query operator injection
+    message: Request data is used directly as a MongoDB query value; a JSON body can supply operators such as $ne or $gt
+    severity: HIGH
+    confidence: MEDIUM
+    match: ["*.find", "*.findOne", "*.findOneAndUpdate", "*.findOneAndDelete", "*.updateOne", "*.updateMany",
+            "*.deleteOne", "*.deleteMany", "*.countDocuments", "*.exists", "*.aggregate"]
+    object_props: ["*"]
+    source_kinds: [http, llm_tool_input]
+  - id: SL-JS-NOSQLI-002
+    vuln_class: nosql_injection
+    title: Server-side JavaScript evaluated in a MongoDB query
+    severity: HIGH
+    match: ["**"]
+    args: []
+    object_props: ["$where"]
+    unknown_origin: nonliteral
+    unknown_origin_confidence: MEDIUM
+  - id: SL-JS-CMDI-001
+    vuln_class: command_injection
+    title: OS command built from untrusted input
+    message: A shell command is executed with data that may contain shell metacharacters
+    severity: CRITICAL
+    match: ["child_process.exec", "child_process.execSync", "exec", "execSync", "shelljs.exec", "shell.exec",
+            "execa.command", "execa.commandSync", "execaCommand", "execaCommandSync", "cp.exec", "cp.execSync",
+            "util.promisify(exec)", "Bun.spawn"]
+    args: [0]
+    unknown_origin: nonliteral
+    unknown_origin_confidence: MEDIUM
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  - id: SL-JS-CMDI-002
+    vuln_class: command_injection
+    title: Process spawned through a shell with untrusted input
+    severity: CRITICAL
+    match: ["child_process.spawn", "child_process.spawnSync", "child_process.execFile", "child_process.execFileSync",
+            "spawn", "spawnSync", "execFile", "execFileSync"]
+    all_args: true
+    when_option: {shell: true}
+    unknown_origin: never
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  - id: SL-JS-CODEI-001
+    vuln_class: code_injection
+    title: Dynamic code execution with untrusted input
+    message: Data is evaluated as JavaScript code
+    severity: CRITICAL
+    match: ["eval", "window.eval", "global.eval", "vm.runInNewContext", "vm.runInThisContext", "vm.runInContext",
+            "vm.compileFunction", "vm.Script", "setTimeout", "setInterval", "setImmediate", "execScript",
+            "Function", "require", "import"]
+    args: [0]
+    unknown_origin: never
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  - id: SL-JS-CODEI-002
+    vuln_class: code_injection
+    title: Function constructor with untrusted input
+    severity: CRITICAL
+    match: ["Function"]
+    all_args: true
+    new_only: true
+    remap: {llm_output: llm_output_handling}
+  # --- XSS ------------------------------------------------------------------
+  - id: SL-JS-XSS-001
+    vuln_class: xss
+    title: Untrusted data written into an HTTP response
+    message: Request data is sent back in the response body without HTML escaping (reflected XSS)
+    severity: HIGH
+    match: ["res.send", "res.write", "res.end", "res.status().send", "response.send", "response.write", "reply.send",
+            "reply.type().send", "res.status().end", "res.type().send", "res.set().send"]
+    args: [0]
+    strings_only: true
+    derived: skip
+    source_kinds: [http, llm_output, retrieval]
+    remap: {llm_output: llm_output_handling}
+  - id: SL-JS-XSS-002
+    vuln_class: xss
+    title: Untrusted data assigned to an HTML sink in the DOM
+    message: HTML is parsed from data that may contain script (DOM XSS)
+    severity: HIGH
+    assign: ["*.innerHTML", "*.outerHTML", "*.srcdoc"]
+    source_kinds: [http, llm_output, retrieval, llm_tool_input]
+    derived: medium
+    unknown_origin: never
+    remap: {llm_output: llm_output_handling}
+  - id: SL-JS-XSS-003
+    vuln_class: xss
+    title: Untrusted data written as HTML
+    severity: HIGH
+    match: ["document.write", "document.writeln", "__jsx_dangerouslySetInnerHTML__", "*.bypassSecurityTrustHtml",
+            "*.createContextualFragment", "$", "jQuery", "*.html", "*.parseHTML"]
+    args: [0]
+    derived: skip
+    source_kinds: [http, llm_output, retrieval]
+    remap: {llm_output: llm_output_handling}
+  - id: SL-JS-XSS-004
+    vuln_class: xss
+    title: Untrusted data inserted as HTML
+    severity: HIGH
+    match: ["*.insertAdjacentHTML"]
+    args: [1]
+    source_kinds: [http, llm_output, retrieval]
+    remap: {llm_output: llm_output_handling}
+  - id: SL-JS-XSS-005
+    vuln_class: xss
+    title: URL attribute set from untrusted input
+    message: A link or frame URL comes from untrusted data and may use the javascript scheme
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["__jsx_url_href__", "__jsx_url_src__", "__jsx_url_action__", "__jsx_url_formAction__"]
+    args: [0]
+    source_kinds: [http, llm_output]
+    remap: {llm_output: llm_output_handling}
+  # --- path traversal ------------------------------------------------------
+  - id: SL-JS-PATH-001
+    vuln_class: path_traversal
+    title: File path built from untrusted input
+    message: A filesystem path is derived from user-controlled data without confinement to a base directory
+    severity: HIGH
+    match: ["fs.readFile", "fs.readFileSync", "fs.writeFile", "fs.writeFileSync", "fs.appendFile", "fs.appendFileSync",
+            "fs.createReadStream", "fs.createWriteStream", "fs.unlink", "fs.unlinkSync", "fs.rm", "fs.rmSync",
+            "fs.rmdir", "fs.readdir", "fs.readdirSync", "fs.stat", "fs.statSync", "fs.open", "fs.openSync",
+            "fs.access", "fs.existsSync", "fs.promises.readFile", "fs.promises.writeFile", "fs.promises.unlink",
+            "fs.promises.readdir", "fsPromises.readFile", "fsPromises.writeFile", "readFile", "readFileSync",
+            "writeFile", "writeFileSync", "res.sendFile", "res.download", "res.attachment", "reply.sendFile",
+            "Bun.file", "fs.copyFile", "fs.rename", "fs.mkdir"]
+    args: [0]
+    source_kinds: [http, llm_output, llm_tool_input]
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  # --- SSRF -----------------------------------------------------------------
+  - id: SL-JS-SSRF-001
+    vuln_class: ssrf
+    title: Server-side request to a URL controlled by the user
+    message: An outbound HTTP request is made to a destination derived from untrusted data
+    severity: HIGH
+    match: ["fetch", "axios", "axios.get", "axios.post", "axios.put", "axios.patch", "axios.delete", "axios.request",
+            "axios.head", "http.get", "https.get", "http.request", "https.request", "got", "got.get", "got.post",
+            "request", "request.get", "request.post", "needle", "needle.get", "superagent.get", "superagent.post",
+            "undici.request", "undici.fetch", "ky", "ky.get", "ky.post", "node-fetch", "nodeFetch"]
+    args: [0]
+    object_props: [url, baseURL, host, hostname]
+    source_kinds: [http, llm_output, llm_tool_input, retrieval]
+    remap: {llm_output: llm_output_handling, llm_tool_input: unsafe_tool_input}
+  # --- redirect -----------------------------------------------------------
+  - id: SL-JS-REDIRECT-001
+    vuln_class: open_redirect
+    title: Redirect to a URL controlled by the user
+    severity: MEDIUM
+    match: ["res.redirect", "reply.redirect", "ctx.redirect", "response.redirect", "redirect", "NextResponse.redirect",
+            "location.assign", "location.replace", "window.location.assign", "window.location.replace", "window.open"]
+    all_args: true
+    source_kinds: [http]
+  - id: SL-JS-REDIRECT-002
+    vuln_class: open_redirect
+    title: Browser navigation to a URL controlled by the user
+    message: Assigning untrusted data to location can redirect users or run javascript URLs
+    severity: MEDIUM
+    assign: ["location", "location.href", "window.location", "window.location.href", "document.location",
+             "document.location.href"]
+    source_kinds: [http]
+  # --- deserialization, prototype pollution, ReDoS --------------------------
+  - id: SL-JS-DESER-001
+    vuln_class: insecure_deserialization
+    title: Untrusted data deserialized with node-serialize
+    message: node-serialize evaluates functions embedded in the payload (remote code execution)
+    severity: CRITICAL
+    match: ["*.unserialize", "unserialize", "serialize.unserialize", "funcster.deepDeserialize"]
+    args: [0]
+    unknown_origin: nonliteral
+    unknown_origin_confidence: MEDIUM
+  - id: SL-JS-PROTO-001
+    vuln_class: prototype_pollution
+    title: Deep merge of untrusted objects
+    message: Deep-merging request data can set __proto__ properties and pollute Object.prototype
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["_.merge", "lodash.merge", "merge", "_.mergeWith", "_.defaultsDeep", "lodash.defaultsDeep", "deepmerge",
+            "_.set", "lodash.set", "_.setWith", "$.extend", "jQuery.extend", "dotProp.set", "objectPath.set"]
+    all_args: true
+    source_kinds: [http]
+  - id: SL-JS-REDOS-001
+    vuln_class: redos
+    title: Regular expression built from untrusted input
+    message: A user-supplied pattern can trigger catastrophic backtracking (ReDoS) or match unintended input
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["RegExp"]
+    args: [0]
+    source_kinds: [http]
+  # --- authentication -------------------------------------------------------
+  - id: SL-JS-AUTH-001
+    vuln_class: insecure_authentication
+    title: Password stored without hashing
+    severity: HIGH
+    assign: ["*.password", "*.passwd", "*.pwd"]
+    source_kinds: [http]
+    cwe: [CWE-256]
+  # --- AI application security ------------------------------------------
+  - id: SL-JS-AI-PROMPT-001
+    vuln_class: prompt_injection
+    title: Untrusted input placed in LLM system instructions
+    message: Data that users or retrieved documents control is placed in the system/developer instructions
+    severity: HIGH
+    special: role_message
+    source_kinds: [http, user_input, retrieval, llm_tool_input]
+    remap: {retrieval: rag_prompt_injection}
+  - id: SL-JS-AI-PROMPT-002
+    vuln_class: prompt_injection
+    title: Untrusted input passed as the system prompt
+    severity: HIGH
+    match: ["generateText", "streamText", "generateObject", "streamObject", "*.messages.create", "*.responses.create",
+            "*.getGenerativeModel", "new Agent", "Agent", "SystemMessage", "*.SystemMessage"]
+    args: []
+    object_props: [system, instructions, systemInstruction, systemPrompt]
+    source_kinds: [http, user_input, retrieval, llm_tool_input]
+    remap: {retrieval: rag_prompt_injection}
+
+checks:
+  - id: SL-JS-CRYPTO-001
+    kind: call
+    vuln_class: weak_cryptography
+    title: Weak hash algorithm (MD5/SHA-1)
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["crypto.createHash", "createHash", "crypto.createHmac", "createHmac"]
+    arg_equals: {0: [md5, sha1, md4, "sha-1", ripemd160]}
+    context_regex: "(?i)pass(word|wd)?|pwd|secret"
+    context_severity: HIGH
+    context_cwe: [CWE-916]
+    cwe: [CWE-328]
+  - id: SL-JS-CRYPTO-002
+    kind: call
+    vuln_class: weak_cryptography
+    title: Deprecated crypto.createCipher without an IV
+    message: createCipher derives keys with a weak KDF and uses no IV
+    severity: HIGH
+    confidence: HIGH
+    match: ["crypto.createCipher", "createCipher", "crypto.createDecipher", "createDecipher"]
+    cwe: [CWE-327]
+  - id: SL-JS-CRYPTO-003
+    kind: call
+    vuln_class: weak_cryptography
+    title: Broken cipher or ECB mode
+    severity: HIGH
+    confidence: HIGH
+    match: ["crypto.createCipheriv", "createCipheriv", "crypto.createDecipheriv", "createDecipheriv"]
+    arg_contains: {0: [des, rc4, rc2, ecb, blowfish, "bf-", "cast5", "idea"]}
+    cwe: [CWE-327]
+  - id: SL-JS-RAND-001
+    kind: call
+    vuln_class: weak_randomness
+    title: Math.random used for a security value
+    message: Math.random is predictable; use crypto.randomBytes, crypto.randomUUID or crypto.getRandomValues
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["Math.random"]
+    assigned_name_regex: "(?i)token|secret|passw|nonce|salt|otp|api_?key|session|csrf|reset|verification|code$|pin$"
+    cwe: [CWE-338]
+  - id: SL-JS-TLS-001
+    kind: call
+    vuln_class: insecure_tls
+    title: TLS certificate verification disabled
+    severity: HIGH
+    confidence: HIGH
+    match: ["**"]
+    option_equals: {rejectUnauthorized: false}
+    cwe: [CWE-295]
+  - id: SL-JS-TLS-002
+    kind: assign
+    vuln_class: insecure_tls
+    title: TLS certificate verification disabled for the whole process
+    severity: HIGH
+    confidence: HIGH
+    target: ["process.env.NODE_TLS_REJECT_UNAUTHORIZED", "process.env[NODE_TLS_REJECT_UNAUTHORIZED]"]
+    value_equals: ["0", 0, false]
+    cwe: [CWE-295]
+  - id: SL-JS-TLS-003
+    kind: call
+    vuln_class: insecure_tls
+    title: TLS verification disabled in the HTTP client
+    severity: HIGH
+    confidence: HIGH
+    match: ["**"]
+    option_equals: {strictSSL: false}
+    cwe: [CWE-295]
+  - id: SL-JS-AUTH-002
+    kind: call
+    vuln_class: insecure_authentication
+    title: JWT verification accepts the "none" algorithm
+    severity: HIGH
+    confidence: HIGH
+    match: ["jwt.verify", "jsonwebtoken.verify", "verify"]
+    option_contains: {algorithms: none}
+    cwe: [CWE-347]
+  - id: SL-JS-AUTH-003
+    kind: call
+    vuln_class: insecure_authentication
+    title: JWT decoded without verification
+    message: jwt.decode does not check the signature; use jwt.verify before trusting claims
+    severity: MEDIUM
+    confidence: LOW
+    match: ["jwt.decode", "jsonwebtoken.decode"]
+    cwe: [CWE-347]
+  - id: SL-JS-AUTH-004
+    kind: compare
+    vuln_class: insecure_authentication
+    title: Hardcoded credential in an authentication check
+    severity: HIGH
+    confidence: MEDIUM
+    exploitability: LIKELY
+    name_regex: "(?i)^(pass(word|wd)?|pwd|secret|api_?key|token|auth_?token)$"
+    value_literal_min_len: 4
+    cwe: [CWE-798]
+  - id: SL-JS-COOKIE-001
+    kind: call
+    vuln_class: insecure_authentication
+    title: Cookie set without the HttpOnly flag
+    severity: LOW
+    confidence: HIGH
+    match: ["res.cookie", "*.cookie", "*.cookies.set"]
+    option_equals: {httpOnly: false}
+    cwe: [CWE-1004]
+  - id: SL-JS-COOKIE-002
+    kind: call
+    vuln_class: insecure_authentication
+    title: Cookie set without the Secure flag
+    severity: LOW
+    confidence: HIGH
+    match: ["res.cookie", "*.cookie", "*.cookies.set"]
+    option_equals: {secure: false}
+    cwe: [CWE-614]
+  - id: SL-JS-SECRET-001
+    kind: call
+    vuln_class: hardcoded_secret
+    title: Hardcoded session or JWT secret
+    message: A signing secret is a literal in the source code
+    severity: HIGH
+    confidence: MEDIUM
+    match: ["session", "expressSession", "express-session", "cookieSession", "jwt.sign", "jsonwebtoken.sign",
+            "cookieParser"]
+    option_literal: {secret: 8}
+    cwe: [CWE-798]
+  - id: SL-JS-CORS-001
+    kind: call
+    vuln_class: dangerous_api
+    title: CORS reflects any origin together with credentials
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["cors", "*.cors", "fastifyCors", "*.register"]
+    option_equals: {credentials: true, origin: true}
+    cwe: [CWE-942]
+  - id: SL-JS-CORS-002
+    kind: call
+    vuln_class: dangerous_api
+    title: CORS allows any origin together with credentials
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["cors", "*.cors", "fastifyCors", "*.register"]
+    option_equals: {credentials: true}
+    option_contains: {origin: "*"}
+    cwe: [CWE-942]
+  - id: SL-JS-EVAL-001
+    kind: call
+    vuln_class: code_injection
+    title: eval of a non-constant string
+    severity: MEDIUM
+    confidence: LOW
+    match: ["eval"]
+    arg_nonliteral: [0]
+    cwe: [CWE-95]
+  - id: SL-JS-AI-EXPOSE-001
+    kind: call
+    vuln_class: sensitive_data_exposure
+    title: LLM API client allowed in the browser
+    message: dangerouslyAllowBrowser ships the provider API key to every visitor's browser
+    severity: HIGH
+    confidence: HIGH
+    match: ["**"]
+    option_equals: {dangerouslyAllowBrowser: true}
+    cwe: [CWE-522]

@@ -1,0 +1,961 @@
+# SecureLens vulnerability catalog.
+#
+# One entry per vulnerability class. Scanner rules reference a class; the
+# catalog supplies the stable, human-reviewed explanation: CWE and OWASP
+# mapping, impact, recommendation and a secure coding pattern. These texts are
+# shown as "Rule guidance" and are used to ground AI analysis — they are not
+# AI-generated.
+
+# =========================================================== Application
+sql_injection:
+  name: SQL Injection
+  engine: APPSEC
+  cwe: [CWE-89]
+  owasp: ["A03:2021 Injection"]
+  severity: CRITICAL
+  description: >-
+    The application builds a SQL statement by combining query text with data. If that data comes from a
+    user, the user can change the structure of the query instead of only supplying a value.
+  impact: >-
+    An attacker may read, modify or delete any data the database account can reach, bypass authentication
+    checks that rely on the query, and in some configurations execute commands on the database server.
+  recommendation: >-
+    Use parameterized queries (prepared statements) so the database receives the query text and the values
+    separately. Never concatenate, format or interpolate untrusted values into SQL. Use allow-lists for
+    identifiers such as column or table names, which cannot be parameterized.
+  remediation: Pass values as bound parameters; keep the SQL text constant.
+  examples:
+    python:
+      vulnerable: 'cursor.execute("SELECT * FROM users WHERE id=" + user_id)'
+      secure: 'cursor.execute("SELECT * FROM users WHERE id=%s", (user_id,))'
+    javascript:
+      vulnerable: 'db.query("SELECT * FROM users WHERE id = " + req.query.id)'
+      secure: 'db.query("SELECT * FROM users WHERE id = ?", [req.query.id])'
+    php:
+      vulnerable: '$db->query("SELECT * FROM users WHERE id = " . $_GET["id"]);'
+      secure: '$stmt = $db->prepare("SELECT * FROM users WHERE id = ?"); $stmt->execute([$_GET["id"]]);'
+  references:
+    - https://cwe.mitre.org/data/definitions/89.html
+    - https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+
+nosql_injection:
+  name: NoSQL Injection
+  engine: APPSEC
+  cwe: [CWE-943]
+  owasp: ["A03:2021 Injection"]
+  severity: HIGH
+  description: >-
+    Request data is used directly inside a NoSQL query. JSON request bodies can carry objects such as
+    {"$ne": null} or {"$gt": ""}, which the database interprets as query operators.
+  impact: Authentication bypass and unauthorized reads or writes of documents.
+  recommendation: >-
+    Validate the type of every query value (for example coerce to String or use a schema validator such as
+    zod or Joi), reject keys that start with $, and never pass request objects straight into a query filter.
+  remediation: Cast values to the expected primitive type before building the filter.
+  examples:
+    javascript:
+      vulnerable: 'User.findOne({ username: req.body.username, password: req.body.password })'
+      secure: 'User.findOne({ username: String(req.body.username) }) // then verify the password hash'
+  references:
+    - https://cwe.mitre.org/data/definitions/943.html
+
+xss:
+  name: Cross-Site Scripting (XSS)
+  engine: APPSEC
+  cwe: [CWE-79]
+  owasp: ["A03:2021 Injection"]
+  severity: HIGH
+  description: >-
+    Untrusted data is placed into an HTML page or DOM sink without context-appropriate encoding, so a browser
+    may interpret it as markup or script.
+  impact: >-
+    Script runs in the victim's session: account takeover through session theft or forged actions, credential
+    phishing inside the trusted origin, and data exfiltration.
+  recommendation: >-
+    Encode output for the context it lands in (HTML body, attribute, URL, JavaScript). Prefer templating that
+    auto-escapes, textContent over innerHTML, and a strict Content-Security-Policy as defence in depth. If HTML
+    must be accepted, sanitize it with a maintained library such as DOMPurify or bleach.
+  remediation: Escape or sanitize before output; avoid raw-HTML sinks.
+  examples:
+    python:
+      vulnerable: 'return "<h1>Hello " + request.args["name"] + "</h1>"'
+      secure: 'return render_template("hello.html", name=request.args["name"])  # auto-escaped'
+    javascript:
+      vulnerable: 'el.innerHTML = location.hash.slice(1)'
+      secure: 'el.textContent = location.hash.slice(1)'
+    php:
+      vulnerable: 'echo "<p>" . $_GET["q"] . "</p>";'
+      secure: 'echo "<p>" . htmlspecialchars($_GET["q"], ENT_QUOTES, "UTF-8") . "</p>";'
+  references:
+    - https://cwe.mitre.org/data/definitions/79.html
+    - https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+
+command_injection:
+  name: OS Command Injection
+  engine: APPSEC
+  cwe: [CWE-78]
+  owasp: ["A03:2021 Injection"]
+  severity: CRITICAL
+  description: >-
+    A shell command string is assembled with untrusted data. Shell metacharacters such as ; | && $() allow
+    the data to append or substitute additional commands.
+  impact: Arbitrary command execution with the privileges of the application process.
+  recommendation: >-
+    Avoid the shell: call the program directly with an argument list (subprocess.run([...]) without
+    shell=True, execFile/spawn without shell). Validate input against a strict allow-list. If a shell is
+    unavoidable, quote each argument with shlex.quote / escapeshellarg.
+  remediation: Pass arguments as a list to a non-shell API and validate them.
+  examples:
+    python:
+      vulnerable: 'subprocess.check_output("ping -c 1 " + host, shell=True)'
+      secure: 'subprocess.check_output(["ping", "-c", "1", host])  # after validating host'
+    javascript:
+      vulnerable: 'exec("ping -c 1 " + req.query.host)'
+      secure: 'execFile("ping", ["-c", "1", host])'
+    php:
+      vulnerable: 'system("ping -c 1 " . $_GET["host"]);'
+      secure: 'system("ping -c 1 " . escapeshellarg($host));'
+  references:
+    - https://cwe.mitre.org/data/definitions/78.html
+    - https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+
+code_injection:
+  name: Code Injection
+  engine: APPSEC
+  cwe: [CWE-94, CWE-95]
+  owasp: ["A03:2021 Injection"]
+  severity: CRITICAL
+  description: Data is evaluated as program code (eval, exec, new Function, assert with strings).
+  impact: Arbitrary code execution inside the application process.
+  recommendation: >-
+    Remove dynamic evaluation. Parse data with a safe parser (json.loads, ast.literal_eval, JSON.parse) and
+    dispatch to a fixed set of functions through an allow-list.
+  remediation: Replace eval-style APIs with safe parsing and explicit dispatch.
+  examples:
+    python:
+      vulnerable: 'result = eval(request.args["expr"])'
+      secure: 'result = ast.literal_eval(request.args["expr"])'
+    javascript:
+      vulnerable: 'eval(userInput)'
+      secure: 'JSON.parse(userInput)'
+  references:
+    - https://cwe.mitre.org/data/definitions/94.html
+
+template_injection:
+  name: Server-Side Template Injection
+  engine: APPSEC
+  cwe: [CWE-1336]
+  owasp: ["A03:2021 Injection"]
+  severity: HIGH
+  description: User-controlled data is compiled as a template instead of being passed as template data.
+  impact: Template engines expose object graphs; SSTI commonly leads to remote code execution.
+  recommendation: Keep templates static and pass user data only as context variables; never render user input as a template string.
+  remediation: Use a fixed template and pass data as variables.
+  examples:
+    python:
+      vulnerable: 'render_template_string("Hello " + name)'
+      secure: 'render_template_string("Hello {{ name }}", name=name)'
+  references:
+    - https://cwe.mitre.org/data/definitions/1336.html
+
+path_traversal:
+  name: Path Traversal
+  engine: APPSEC
+  cwe: [CWE-22]
+  owasp: ["A01:2021 Broken Access Control"]
+  severity: HIGH
+  description: >-
+    A filesystem path is derived from untrusted input. Sequences such as ../ or absolute paths let the caller
+    reach files outside the intended directory. Joining with a base directory does not prevent this.
+  impact: Reading or overwriting arbitrary files such as configuration, keys or source code.
+  recommendation: >-
+    Map user input to an allow-listed identifier where possible. Otherwise resolve the final path
+    (os.path.realpath / path.resolve / realpath) and verify it is inside the base directory before use; use
+    helpers such as send_from_directory or secure_filename for uploads.
+  remediation: Resolve the path and confirm it stays within the permitted base directory.
+  examples:
+    python:
+      vulnerable: 'open(os.path.join(BASE, request.args["f"]))'
+      secure: |-
+        path = os.path.realpath(os.path.join(BASE, request.args["f"]))
+        if not path.startswith(os.path.realpath(BASE) + os.sep): abort(404)
+    javascript:
+      vulnerable: 'res.sendFile(path.join(__dirname, "files", req.query.name))'
+      secure: 'res.sendFile(req.query.name, { root: path.join(__dirname, "files") }) // plus allow-list'
+  references:
+    - https://cwe.mitre.org/data/definitions/22.html
+
+file_inclusion:
+  name: File Inclusion (LFI/RFI)
+  engine: APPSEC
+  cwe: [CWE-98]
+  owasp: ["A03:2021 Injection"]
+  severity: CRITICAL
+  description: include/require receives a path influenced by the request, so the interpreter may load and execute an attacker-chosen file.
+  impact: Execution of arbitrary PHP code, disclosure of local files.
+  recommendation: Never include files named by the request. Map request values to a fixed allow-list of templates or modules.
+  remediation: Replace dynamic includes with an allow-list lookup.
+  examples:
+    php:
+      vulnerable: 'include $_GET["page"] . ".php";'
+      secure: '$pages = ["home" => "home.php"]; include $pages[$_GET["page"]] ?? "home.php";'
+  references:
+    - https://cwe.mitre.org/data/definitions/98.html
+
+ssrf:
+  name: Server-Side Request Forgery (SSRF)
+  engine: APPSEC
+  cwe: [CWE-918]
+  owasp: ["A10:2021 Server-Side Request Forgery"]
+  severity: HIGH
+  description: The server makes an outbound request to a destination the caller controls.
+  impact: >-
+    Access to internal services and cloud metadata endpoints (credential theft), port scanning of the internal
+    network, and bypass of network-level access controls.
+  recommendation: >-
+    Allow-list destination hosts and schemes. Resolve the hostname and reject private, loopback and link-local
+    addresses, disable redirects, and route outbound traffic through an egress proxy.
+  remediation: Validate the destination against an allow-list after DNS resolution.
+  examples:
+    python:
+      vulnerable: 'requests.get(request.args["url"])'
+      secure: 'url = validate_against_allowlist(request.args["url"]); requests.get(url, allow_redirects=False)'
+  references:
+    - https://cwe.mitre.org/data/definitions/918.html
+    - https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+
+open_redirect:
+  name: Open Redirect
+  engine: APPSEC
+  cwe: [CWE-601]
+  owasp: ["A01:2021 Broken Access Control"]
+  severity: MEDIUM
+  description: The redirect destination comes from request data without validation.
+  impact: Phishing through a trusted domain, and token leakage in OAuth-style flows.
+  recommendation: Redirect only to relative paths or to an allow-list of known destinations.
+  remediation: Validate the target against an allow-list or accept only relative paths.
+  examples:
+    python:
+      vulnerable: 'return redirect(request.args["next"])'
+      secure: 'nxt = request.args.get("next", "/"); return redirect(nxt if url_has_allowed_host_and_scheme(nxt, None) else "/")'
+  references:
+    - https://cwe.mitre.org/data/definitions/601.html
+
+hardcoded_secret:
+  name: Hardcoded Secret
+  engine: APPSEC
+  cwe: [CWE-798]
+  owasp: ["A07:2021 Identification and Authentication Failures"]
+  severity: HIGH
+  description: A credential, key or token is embedded in source code or configuration committed to the repository.
+  impact: >-
+    Anyone with access to the code, its history, build artifacts or a leaked copy can use the credential.
+    Removing it from the latest commit does not revoke it.
+  recommendation: >-
+    Revoke and rotate the credential first. Then load secrets at runtime from the environment or a secret
+    manager, and add secret scanning to CI so new leaks are blocked.
+  remediation: Rotate the secret and read it from the environment or a secret manager.
+  examples:
+    python:
+      vulnerable: 'API_KEY = "sk_live_..."'
+      secure: 'API_KEY = os.environ["PAYMENTS_API_KEY"]'
+    javascript:
+      vulnerable: 'const apiKey = "sk_live_...";'
+      secure: 'const apiKey = process.env.PAYMENTS_API_KEY;'
+  references:
+    - https://cwe.mitre.org/data/definitions/798.html
+    - https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html
+
+weak_cryptography:
+  name: Weak Cryptography
+  engine: APPSEC
+  cwe: [CWE-327, CWE-328]
+  owasp: ["A02:2021 Cryptographic Failures"]
+  severity: MEDIUM
+  description: A broken or weak algorithm or mode is used (MD5, SHA-1, DES, RC4, ECB mode, deprecated APIs).
+  impact: >-
+    Collisions or recovered plaintext; when used for passwords, fast hashes let leaked hashes be cracked at
+    billions of guesses per second.
+  recommendation: >-
+    Use SHA-256 or better for integrity, authenticated encryption (AES-GCM, ChaCha20-Poly1305) for
+    confidentiality, and a password-hashing function (Argon2id, scrypt, bcrypt) for passwords.
+  remediation: Replace the algorithm with a modern, purpose-appropriate primitive.
+  examples:
+    python:
+      vulnerable: 'hashlib.md5(password.encode()).hexdigest()'
+      secure: 'argon2.PasswordHasher().hash(password)'
+    javascript:
+      vulnerable: 'crypto.createHash("md5").update(data).digest("hex")'
+      secure: 'crypto.createHash("sha256").update(data).digest("hex")'
+    php:
+      vulnerable: '$hash = md5($password);'
+      secure: '$hash = password_hash($password, PASSWORD_DEFAULT);'
+  references:
+    - https://cwe.mitre.org/data/definitions/327.html
+    - https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+
+weak_randomness:
+  name: Insecure Randomness
+  engine: APPSEC
+  cwe: [CWE-338]
+  owasp: ["A02:2021 Cryptographic Failures"]
+  severity: MEDIUM
+  description: A non-cryptographic pseudo-random generator produces a security-sensitive value such as a token or reset code.
+  impact: Attackers can predict or brute-force the value and hijack sessions or password resets.
+  recommendation: Use a CSPRNG — secrets.token_urlsafe (Python), crypto.randomBytes/randomUUID (Node.js), random_bytes/random_int (PHP).
+  remediation: Generate security values with the platform's cryptographic random API.
+  examples:
+    python:
+      vulnerable: 'token = str(random.randint(100000, 999999))'
+      secure: 'token = secrets.token_urlsafe(32)'
+    javascript:
+      vulnerable: 'const token = Math.random().toString(36)'
+      secure: 'const token = crypto.randomBytes(32).toString("hex")'
+  references:
+    - https://cwe.mitre.org/data/definitions/338.html
+
+insecure_tls:
+  name: Insecure TLS / Certificate Validation
+  engine: APPSEC
+  cwe: [CWE-295]
+  owasp: ["A02:2021 Cryptographic Failures"]
+  severity: HIGH
+  description: Certificate or host-key verification is disabled, or an obsolete protocol version is allowed.
+  impact: A network attacker can impersonate the remote service and read or modify traffic, including credentials.
+  recommendation: Keep verification enabled. For private CAs, configure the CA bundle explicitly rather than disabling checks.
+  remediation: Remove verify=False / rejectUnauthorized:false and trust the correct CA instead.
+  references:
+    - https://cwe.mitre.org/data/definitions/295.html
+
+insecure_authentication:
+  name: Insecure Authentication
+  engine: APPSEC
+  cwe: [CWE-287]
+  owasp: ["A07:2021 Identification and Authentication Failures"]
+  severity: HIGH
+  description: >-
+    Authentication or session handling is implemented unsafely: signatures not verified, hardcoded credentials,
+    plaintext password storage, loose comparisons of secrets or insecure cookie flags.
+  impact: Account takeover, authentication bypass or forged tokens.
+  recommendation: >-
+    Verify token signatures with an explicit algorithm allow-list, store only password hashes (Argon2id/bcrypt),
+    compare secrets in constant time, never hardcode credentials, and set Secure, HttpOnly and SameSite on
+    session cookies.
+  remediation: Apply the framework's standard, verified authentication mechanism.
+  references:
+    - https://cwe.mitre.org/data/definitions/287.html
+    - https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html
+
+missing_csrf_protection:
+  name: Missing CSRF Protection
+  engine: APPSEC
+  cwe: [CWE-352]
+  owasp: ["A01:2021 Broken Access Control"]
+  severity: MEDIUM
+  description: CSRF protection is explicitly disabled for a state-changing endpoint.
+  impact: Another site can make a signed-in victim's browser perform actions on their behalf.
+  recommendation: Keep CSRF middleware enabled; for APIs, require non-cookie credentials or SameSite=strict cookies plus a CSRF token.
+  remediation: Remove the exemption and send a CSRF token from the client.
+  references:
+    - https://cwe.mitre.org/data/definitions/352.html
+    - https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html
+
+broken_authorization:
+  name: Broken Authorization (IDOR)
+  engine: APPSEC
+  cwe: [CWE-639, CWE-862]
+  owasp: ["A01:2021 Broken Access Control"]
+  severity: MEDIUM
+  description: >-
+    A record is loaded using an identifier supplied by the client, and the surrounding code does not check
+    that the current user may access it. This is a heuristic signal and needs human review.
+  impact: Users may read or modify other users' records by changing an identifier.
+  recommendation: >-
+    Enforce object-level authorization on every access: scope queries to the current user or tenant
+    (e.g. filter by owner_id) or call an authorization check before returning the object.
+  remediation: Scope the lookup to the authenticated principal.
+  examples:
+    python:
+      vulnerable: 'order = Order.objects.get(id=request.GET["id"])'
+      secure: 'order = Order.objects.get(id=request.GET["id"], owner=request.user)'
+  references:
+    - https://cwe.mitre.org/data/definitions/639.html
+    - https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html
+
+unsafe_file_handling:
+  name: Unsafe File Handling
+  engine: APPSEC
+  cwe: [CWE-434, CWE-377, CWE-732]
+  owasp: ["A01:2021 Broken Access Control"]
+  severity: HIGH
+  description: >-
+    Files are handled unsafely: uploads saved under client-controlled names, archives extracted without path
+    checks (Zip Slip), predictable temporary files or world-writable permissions.
+  impact: Overwriting application files, uploading executable code, or tampering by other local users.
+  recommendation: >-
+    Generate server-side file names, store uploads outside the web root, validate type and size, extract
+    archives with path validation (tarfile filter="data"), use mkstemp/NamedTemporaryFile, and apply least
+    privilege permissions.
+  remediation: Control the destination path and permissions server-side.
+  references:
+    - https://cwe.mitre.org/data/definitions/434.html
+    - https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+
+insecure_deserialization:
+  name: Insecure Deserialization
+  engine: APPSEC
+  cwe: [CWE-502]
+  owasp: ["A08:2021 Software and Data Integrity Failures"]
+  severity: HIGH
+  description: Data is deserialized with a format that can instantiate arbitrary objects (pickle, unsafe YAML, PHP unserialize, node-serialize, full torch.load).
+  impact: Remote code execution or object injection when the input is attacker-controlled.
+  recommendation: Use data-only formats (JSON), yaml.safe_load, torch.load(weights_only=True) and signed payloads when serialized objects must cross a trust boundary.
+  remediation: Switch to a data-only format or a safe loader.
+  examples:
+    python:
+      vulnerable: 'data = pickle.loads(request.data)'
+      secure: 'data = json.loads(request.data)'
+    php:
+      vulnerable: '$prefs = unserialize($_COOKIE["prefs"]);'
+      secure: '$prefs = json_decode($_COOKIE["prefs"], true);'
+  references:
+    - https://cwe.mitre.org/data/definitions/502.html
+    - https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html
+
+xxe:
+  name: XML External Entity (XXE)
+  engine: APPSEC
+  cwe: [CWE-611]
+  owasp: ["A05:2021 Security Misconfiguration"]
+  severity: HIGH
+  description: An XML parser resolves external entities while parsing untrusted documents.
+  impact: Local file disclosure, SSRF and denial of service.
+  recommendation: Disable DTDs and external entities (e.g. defusedxml, resolve_entities=False, libxml_disable_entity_loader).
+  remediation: Parse XML with entity resolution disabled.
+  references:
+    - https://cwe.mitre.org/data/definitions/611.html
+
+dangerous_api:
+  name: Dangerous API Usage
+  engine: APPSEC
+  cwe: [CWE-676]
+  owasp: ["A05:2021 Security Misconfiguration"]
+  severity: MEDIUM
+  description: An API or configuration that is unsafe in production is used (debug servers, permissive CORS, extract(), eval of non-constant strings).
+  impact: Depends on the API — ranges from information disclosure to remote code execution.
+  recommendation: Replace the construct with the safe alternative documented for the framework and keep debug features out of production builds.
+  remediation: Use the framework's secure configuration.
+  references:
+    - https://cwe.mitre.org/data/definitions/676.html
+
+prototype_pollution:
+  name: Prototype Pollution
+  engine: APPSEC
+  cwe: [CWE-1321]
+  owasp: ["A08:2021 Software and Data Integrity Failures"]
+  severity: MEDIUM
+  description: Untrusted objects are deep-merged or assigned by path, allowing __proto__ or constructor.prototype keys to modify shared prototypes.
+  impact: Property injection across the application, which can lead to authorization bypass or code execution.
+  recommendation: Validate input with a schema, reject __proto__/constructor/prototype keys, and create maps with Object.create(null) or Map.
+  remediation: Validate keys and avoid deep-merging raw request objects.
+  references:
+    - https://cwe.mitre.org/data/definitions/1321.html
+    - https://cheatsheetseries.owasp.org/cheatsheets/Prototype_Pollution_Prevention_Cheat_Sheet.html
+
+redos:
+  name: Regular Expression Denial of Service
+  engine: APPSEC
+  cwe: [CWE-1333]
+  owasp: ["A05:2021 Security Misconfiguration"]
+  severity: MEDIUM
+  description: A regular expression is constructed from untrusted input.
+  impact: Catastrophic backtracking can block the event loop or worker, denying service.
+  recommendation: Do not build patterns from user input; escape it (e.g. escape-string-regexp) or use a linear-time engine such as RE2.
+  remediation: Escape user input before using it in a pattern.
+  references:
+    - https://cwe.mitre.org/data/definitions/1333.html
+
+sensitive_data_exposure:
+  name: Sensitive Data Exposure
+  engine: APPSEC
+  cwe: [CWE-200]
+  owasp: ["A01:2021 Broken Access Control"]
+  severity: HIGH
+  description: Configuration exposes sensitive data to parties who should not see it (for example provider API keys in browser bundles).
+  impact: Credential theft and unauthorized use of paid or privileged services.
+  recommendation: Keep provider credentials on the server and proxy requests through an authenticated backend.
+  remediation: Move the call behind a server-side endpoint.
+  references:
+    - https://cwe.mitre.org/data/definitions/200.html
+
+vulnerable_dependency:
+  name: Vulnerable Dependency
+  engine: APPSEC
+  cwe: [CWE-1395]
+  owasp: ["A06:2021 Vulnerable and Outdated Components"]
+  severity: HIGH
+  description: A third-party package version is affected by a published security advisory.
+  impact: Depends on the advisory; exploitation requires the vulnerable code path to be reachable.
+  recommendation: Upgrade to a fixed version (or apply the vendor's mitigation), then rescan. Review whether the vulnerable function is used.
+  remediation: Upgrade the package to a version outside the affected range.
+  references:
+    - https://cwe.mitre.org/data/definitions/1395.html
+
+# ====================================================== AI application code
+prompt_injection:
+  name: Prompt Injection Risk (untrusted input in instructions)
+  engine: AISEC
+  cwe: [CWE-1427]
+  owasp: ["LLM01:2025 Prompt Injection"]
+  severity: HIGH
+  description: >-
+    Untrusted input is concatenated into the system or developer instructions of an LLM call. The model cannot
+    distinguish the application's instructions from the attacker's text placed alongside them.
+  impact: The attacker can override the application's policy, extract hidden instructions or steer tool use.
+  recommendation: >-
+    Keep system instructions constant. Put user input only in user-role messages, delimit and label untrusted
+    content, and enforce security decisions (authorization, output handling) in code rather than in the prompt.
+  remediation: Move untrusted data out of the system prompt into a clearly delimited user message.
+  examples:
+    python:
+      vulnerable: 'messages=[{"role": "system", "content": "You are a helper for " + request.args["team"]}]'
+      secure: |-
+        messages=[{"role": "system", "content": SYSTEM_PROMPT},
+                  {"role": "user", "content": request.args["question"]}]
+  references:
+    - https://cwe.mitre.org/data/definitions/1427.html
+    - https://genai.owasp.org/llm-top-10/
+    - https://cheatsheetseries.owasp.org/cheatsheets/LLM_Prompt_Injection_Prevention_Cheat_Sheet.html
+
+rag_prompt_injection:
+  name: Indirect Prompt Injection Risk (retrieved content in instructions)
+  engine: AISEC
+  cwe: [CWE-1427]
+  owasp: ["LLM01:2025 Prompt Injection", "LLM08:2025 Vector and Embedding Weaknesses"]
+  severity: HIGH
+  description: Retrieved documents are inserted into the system instructions, so instructions hidden in a document are treated as trusted.
+  impact: A poisoned document can hijack answers, leak data or trigger tool calls for every user who retrieves it.
+  recommendation: Pass retrieved content as quoted, delimited data in a non-system message, tell the model it is untrusted, and validate outputs and tool calls in code.
+  remediation: Separate retrieved context from trusted instructions.
+  references:
+    - https://cwe.mitre.org/data/definitions/1427.html
+    - https://genai.owasp.org/llm-top-10/
+
+llm_output_handling:
+  name: Improper LLM Output Handling
+  engine: AISEC
+  cwe: [CWE-1426]
+  owasp: ["LLM05:2025 Improper Output Handling"]
+  severity: HIGH
+  description: >-
+    Text generated by a model reaches a dangerous sink (HTML, SQL, shell, eval, file paths, HTTP requests)
+    without validation. Model output is attacker-influenced whenever prompts or retrieved data are.
+  impact: The same impact as the underlying sink — XSS, SQL injection, command or code execution.
+  recommendation: "Treat model output as untrusted input: validate against a schema, encode for the output context and never execute it."
+  remediation: Validate and encode model output before using it.
+  references:
+    - https://cwe.mitre.org/data/definitions/1426.html
+    - https://genai.owasp.org/llm-top-10/
+
+unsafe_tool_input:
+  name: Unsafe Tool Input Handling
+  engine: AISEC
+  cwe: [CWE-1426, CWE-20]
+  owasp: ["LLM06:2025 Excessive Agency", "LLM05:2025 Improper Output Handling"]
+  severity: HIGH
+  description: >-
+    An argument the model chooses for a tool (LangChain/agents tool, MCP tool, function calling) reaches a
+    dangerous operation without validation. Tool arguments are controlled by whoever can influence the prompt.
+  impact: Prompt injection becomes command execution, SQL injection, SSRF or file access through the tool.
+  recommendation: >-
+    Validate tool arguments against strict schemas and allow-lists, run tools with least privilege, and
+    require human approval for destructive actions.
+  remediation: Constrain and validate every tool argument before use.
+  references:
+    - https://cwe.mitre.org/data/definitions/1426.html
+    - https://genai.owasp.org/llm-top-10/
+
+excessive_agency:
+  name: Excessive Agency
+  engine: AISEC
+  cwe: [CWE-250, CWE-863]
+  owasp: ["LLM06:2025 Excessive Agency"]
+  severity: HIGH
+  description: An agent is given capabilities broader than its task requires (arbitrary code or shell execution, unrestricted requests).
+  impact: Any successful prompt injection inherits these capabilities.
+  recommendation: Give agents narrowly scoped tools, sandbox execution, enforce authorization per action and add human approval for high-risk operations.
+  remediation: Replace general-purpose execution tools with narrow, audited tools.
+  references:
+    - https://cwe.mitre.org/data/definitions/250.html
+    - https://genai.owasp.org/llm-top-10/
+
+ai_supply_chain:
+  name: AI Supply Chain Risk
+  engine: AISEC
+  cwe: [CWE-494]
+  owasp: ["LLM03:2025 Supply Chain"]
+  severity: HIGH
+  description: Model loading executes code from the model repository (trust_remote_code) or deserializes pickled weights.
+  impact: A malicious or compromised model repository runs code on the host.
+  recommendation: Pin model revisions, prefer safetensors, avoid trust_remote_code or review and vendor the code, and load weights with weights_only=True.
+  remediation: Disable remote code execution and use safe weight formats.
+  references:
+    - https://cwe.mitre.org/data/definitions/494.html
+    - https://genai.owasp.org/llm-top-10/
+
+# ================================================= AI security evaluation
+prompt_injection_direct:
+  name: Direct Prompt Injection
+  engine: AISEC
+  cwe: [CWE-1427]
+  owasp: ["LLM01:2025 Prompt Injection"]
+  severity: HIGH
+  description: The application followed instructions supplied in the user's message that conflict with its configured behaviour.
+  impact: Users can make the application ignore its policy, disclose protected data or misuse tools.
+  recommendation: Enforce policy outside the model (output filters, authorization in code), keep instructions minimal and non-secret, and add adversarial tests to CI.
+  remediation: Add enforcement layers that do not depend on the model obeying instructions.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+prompt_injection_indirect:
+  name: Indirect Prompt Injection
+  engine: AISEC
+  cwe: [CWE-1427]
+  owasp: ["LLM01:2025 Prompt Injection"]
+  severity: HIGH
+  description: The application followed instructions embedded in content it processed (documents, web pages, tool results), not from its user.
+  impact: Third parties who can place content in the data path can control the application for every user.
+  recommendation: Isolate untrusted content from instructions, strip or neutralize instruction-like text where feasible, and require authorization for any action triggered after processing untrusted content.
+  remediation: Treat processed content as data and enforce actions in code.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+instruction_conflict:
+  name: Instruction Hierarchy Failure
+  engine: AISEC
+  cwe: [CWE-1427]
+  owasp: ["LLM01:2025 Prompt Injection"]
+  severity: MEDIUM
+  description: When the user's request conflicted with the system instructions, the application followed the user.
+  impact: Configured restrictions (scope, tone, data boundaries) can be bypassed by asking.
+  recommendation: Restate critical constraints in code-level checks and test conflicting instructions explicitly.
+  remediation: Enforce non-negotiable constraints outside the prompt.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+jailbreak_resistance:
+  name: Policy Bypass (Jailbreak Resistance)
+  engine: AISEC
+  cwe: [CWE-1427]
+  owasp: ["LLM01:2025 Prompt Injection"]
+  severity: MEDIUM
+  description: A role-play or framing technique caused the application to step outside its configured policy (tested with a harmless marker, never harmful content).
+  impact: Users can obtain behaviour the application is configured to refuse.
+  recommendation: Combine model-level safety with application-level output validation and monitoring.
+  remediation: Add output validation that does not rely on the model's own judgement.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+system_prompt_exposure:
+  name: System Prompt Leakage
+  engine: AISEC
+  cwe: [CWE-200, CWE-497]
+  owasp: ["LLM07:2025 System Prompt Leakage"]
+  severity: MEDIUM
+  description: The application revealed its hidden system instructions.
+  impact: Leaked instructions reveal business logic, internal names and any secrets embedded in them, and make targeted injection easier.
+  recommendation: Assume the system prompt is public — keep secrets and authorization logic out of it, and filter responses that echo it.
+  remediation: Remove sensitive content from the system prompt and add leak detection on output.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+sensitive_data_disclosure:
+  name: Sensitive Information Disclosure
+  engine: AISEC
+  cwe: [CWE-200, CWE-359]
+  owasp: ["LLM02:2025 Sensitive Information Disclosure"]
+  severity: HIGH
+  description: The application disclosed data it was configured to protect (planted canary secrets, credentials or personal data).
+  impact: Exposure of credentials, personal data or confidential business information.
+  recommendation: Do not place secrets in model context, apply data minimization, and scan outputs for sensitive patterns before returning them.
+  remediation: Remove sensitive data from the context and add output filtering.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+unauthorized_retrieval:
+  name: Unauthorized Document Retrieval
+  engine: AISEC
+  cwe: [CWE-863, CWE-639]
+  owasp: ["LLM08:2025 Vector and Embedding Weaknesses", "LLM02:2025 Sensitive Information Disclosure"]
+  severity: HIGH
+  description: The retrieval layer returned documents the requesting user is not authorized to read.
+  impact: Users can read restricted documents by asking questions.
+  recommendation: Enforce document-level access control inside the retrieval query (metadata filters bound to the authenticated user), not after generation.
+  remediation: Filter retrieval by the caller's permissions before ranking.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+cross_user_exposure:
+  name: Cross-User Information Exposure
+  engine: AISEC
+  cwe: [CWE-639, CWE-359]
+  owasp: ["LLM02:2025 Sensitive Information Disclosure", "LLM08:2025 Vector and Embedding Weaknesses"]
+  severity: CRITICAL
+  description: Data belonging to one user appeared in responses to a different user.
+  impact: Privacy breach across tenants or accounts.
+  recommendation: Partition memory, conversation history and vector indexes per tenant/user and bind retrieval filters to the authenticated identity.
+  remediation: Isolate per-user data in every retrieval and memory layer.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+rag_injection:
+  name: Retrieved-Content Instruction Injection
+  engine: AISEC
+  cwe: [CWE-1427]
+  owasp: ["LLM01:2025 Prompt Injection", "LLM08:2025 Vector and Embedding Weaknesses"]
+  severity: HIGH
+  description: Instructions placed inside a retrieved document changed the application's behaviour.
+  impact: Anyone able to add content to the knowledge base can control answers and actions.
+  recommendation: Treat retrieved text as data, constrain actions after retrieval, validate ingestion sources and monitor for instruction-like content.
+  remediation: Separate retrieved content from instructions and restrict post-retrieval actions.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+retrieval_boundary:
+  name: Retrieval Boundary Failure
+  engine: AISEC
+  cwe: [CWE-863]
+  owasp: ["LLM08:2025 Vector and Embedding Weaknesses"]
+  severity: MEDIUM
+  description: The retrieval layer returned content outside the configured collection, tenant or classification boundary.
+  impact: Answers may include out-of-scope or restricted material.
+  recommendation: Apply collection and classification filters at query time and test them with boundary cases.
+  remediation: Enforce scope filters inside the retriever.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+unauthorized_tool_call:
+  name: Unauthorized Tool Call
+  engine: AISEC
+  cwe: [CWE-862, CWE-863]
+  owasp: ["LLM06:2025 Excessive Agency"]
+  severity: CRITICAL
+  description: The agent executed a tool or action the current user is not permitted to perform.
+  impact: Privilege escalation through the agent — actions performed with the agent's permissions instead of the user's.
+  recommendation: Check the end user's permission for every tool call in code (not in the prompt) and require explicit approval for high-risk actions.
+  remediation: Enforce per-call authorization in the tool execution layer.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+excessive_permissions:
+  name: Excessive Agent Permissions
+  engine: AISEC
+  cwe: [CWE-250]
+  owasp: ["LLM06:2025 Excessive Agency"]
+  severity: HIGH
+  description: The agent attempted to use capabilities beyond what its task requires; the attempt itself shows that the tool is reachable.
+  impact: A successful injection could escalate to destructive or sensitive actions.
+  recommendation: Remove tools the agent does not need and scope the remaining ones to minimum permissions.
+  remediation: Apply least privilege to the agent's tool set.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+unsafe_tool_handling:
+  name: Tool Input Manipulation
+  engine: AISEC
+  cwe: [CWE-20]
+  owasp: ["LLM06:2025 Excessive Agency", "LLM05:2025 Improper Output Handling"]
+  severity: HIGH
+  description: Untrusted content caused the agent to call a tool with manipulated arguments (for example a different recipient or target).
+  impact: Actions are redirected to attacker-chosen targets.
+  recommendation: Validate tool arguments against the user's intent and allow-lists; confirm sensitive parameters with the user.
+  remediation: Validate and confirm tool arguments before execution.
+  references:
+    - https://genai.owasp.org/llm-top-10/
+
+# ================================================= Language-specific classes
+ldap_injection:
+  name: LDAP Injection
+  engine: APPSEC
+  cwe: [CWE-90]
+  owasp: ["A03:2021 Injection"]
+  severity: HIGH
+  description: Untrusted input is placed into an LDAP search filter or distinguished name without escaping, so characters such as * ( ) and \ change the query.
+  impact: Authentication bypass and disclosure of directory entries the user should not see.
+  recommendation: Escape filter values with the framework's LDAP encoder (for example Spring LdapEncoder.filterEncode) or build filters with parameterized APIs.
+  remediation: Encode values before placing them in an LDAP filter.
+  examples:
+    java:
+      vulnerable: 'ctx.search("ou=people", "(uid=" + request.getParameter("user") + ")", controls)'
+      secure: 'ctx.search("ou=people", "(uid={0})", new Object[]{ user }, controls)'
+  references:
+    - https://cwe.mitre.org/data/definitions/90.html
+
+jndi_injection:
+  name: JNDI Injection
+  engine: APPSEC
+  cwe: [CWE-74, CWE-917]
+  owasp: ["A03:2021 Injection"]
+  severity: CRITICAL
+  description: A JNDI lookup uses a name that the user controls. A crafted ldap:// or rmi:// name makes the JVM load and instantiate remote objects — the mechanism behind Log4Shell.
+  impact: Remote code execution in the JVM.
+  recommendation: Never pass user input to InitialContext.lookup; use a fixed allow-list of names, keep the JDK updated (trustURLCodebase disabled) and upgrade vulnerable logging libraries.
+  remediation: Replace dynamic JNDI names with a fixed allow-list.
+  references:
+    - https://cwe.mitre.org/data/definitions/917.html
+
+expression_injection:
+  name: Expression Language Injection
+  engine: APPSEC
+  cwe: [CWE-917]
+  owasp: ["A03:2021 Injection"]
+  severity: CRITICAL
+  description: User input is evaluated as an expression (SpEL, OGNL, MVEL, EL). Expression languages can call arbitrary methods.
+  impact: Remote code execution.
+  recommendation: Do not evaluate user-supplied expressions; if dynamic evaluation is essential use a SimpleEvaluationContext with a restricted feature set.
+  remediation: Replace expression evaluation with explicit logic or a restricted evaluation context.
+  references:
+    - https://cwe.mitre.org/data/definitions/917.html
+
+buffer_overflow:
+  name: Buffer Overflow
+  engine: APPSEC
+  cwe: [CWE-120, CWE-787]
+  owasp: ["A06:2021 Vulnerable and Outdated Components"]
+  severity: CRITICAL
+  description: Data is copied into a fixed-size buffer without checking that it fits (strcpy, strcat, sprintf, gets, scanf("%s")). Bytes beyond the buffer overwrite adjacent memory.
+  impact: Memory corruption — crashes, data corruption and, commonly, arbitrary code execution by overwriting return addresses or function pointers.
+  recommendation: Use bounded APIs (snprintf, strlcpy/strlcat, fgets with sizeof), always pass the destination size, validate lengths before copying, and compile with stack protectors, FORTIFY_SOURCE and sanitizers in testing.
+  remediation: Replace unbounded copies with size-checked equivalents.
+  examples:
+    c:
+      vulnerable: 'char buf[16]; strcpy(buf, argv[1]);'
+      secure: 'char buf[16]; snprintf(buf, sizeof buf, "%s", argv[1]);'
+    cpp:
+      vulnerable: 'char name[32]; std::strcpy(name, input.c_str());'
+      secure: 'std::string name = input;  // or check input.size() < sizeof(name) before copying'
+  references:
+    - https://cwe.mitre.org/data/definitions/120.html
+    - https://cwe.mitre.org/data/definitions/787.html
+
+out_of_bounds:
+  name: Out-of-Bounds Access
+  engine: APPSEC
+  cwe: [CWE-125, CWE-787, CWE-129]
+  owasp: ["A06:2021 Vulnerable and Outdated Components"]
+  severity: HIGH
+  description: An index or length derived from input is used to read or write memory without verifying it is within the object's bounds.
+  impact: Out-of-bounds reads leak memory (secrets, pointers); out-of-bounds writes corrupt memory and can lead to code execution.
+  recommendation: Validate every index against the array length and every copy length against the destination size before use; prefer containers with checked access (std::vector::at, std::span).
+  remediation: Add explicit bounds checks before indexing or copying.
+  examples:
+    c:
+      vulnerable: 'int idx = atoi(argv[1]); table[idx] = value;'
+      secure: 'int idx = atoi(argv[1]); if (idx < 0 || idx >= TABLE_SIZE) return -1; table[idx] = value;'
+  references:
+    - https://cwe.mitre.org/data/definitions/125.html
+
+use_after_free:
+  name: Use After Free
+  engine: APPSEC
+  cwe: [CWE-416]
+  owasp: ["A06:2021 Vulnerable and Outdated Components"]
+  severity: CRITICAL
+  description: Memory is accessed through a pointer after it has been freed. The allocator may already have handed that memory to another object.
+  impact: Memory corruption that attackers commonly turn into arbitrary code execution.
+  recommendation: Set pointers to NULL immediately after free, give each allocation a single clear owner, and in C++ use RAII (std::unique_ptr, std::shared_ptr) instead of manual delete.
+  remediation: Null the pointer after freeing and restructure ownership so no path uses it afterwards.
+  examples:
+    c:
+      vulnerable: 'free(session); log_user(session->name);'
+      secure: 'log_user(session->name); free(session); session = NULL;'
+    cpp:
+      vulnerable: 'delete conn; conn->close();'
+      secure: 'auto conn = std::make_unique<Connection>(); /* freed automatically when it goes out of scope */'
+  references:
+    - https://cwe.mitre.org/data/definitions/416.html
+
+double_free:
+  name: Double Free
+  engine: APPSEC
+  cwe: [CWE-415]
+  owasp: ["A06:2021 Vulnerable and Outdated Components"]
+  severity: HIGH
+  description: The same memory is freed twice.
+  impact: Allocator metadata corruption, which can be exploited for arbitrary writes and code execution.
+  recommendation: Set pointers to NULL after free (free(NULL) is a no-op) and centralize cleanup on a single code path.
+  remediation: Null the pointer after the first free and remove the duplicate release.
+  references:
+    - https://cwe.mitre.org/data/definitions/415.html
+
+format_string:
+  name: Format String Vulnerability
+  engine: APPSEC
+  cwe: [CWE-134]
+  owasp: ["A03:2021 Injection"]
+  severity: CRITICAL
+  description: User-controlled data is passed as the format argument of printf-style functions. Directives such as %x and %n read and write stack memory.
+  impact: Information disclosure and arbitrary memory writes leading to code execution.
+  recommendation: Always use a constant format string — printf("%s", input), never printf(input) — and compile with -Wformat -Wformat-security.
+  remediation: Pass user data as an argument to a literal format string.
+  examples:
+    c:
+      vulnerable: 'printf(argv[1]);'
+      secure: 'printf("%s", argv[1]);'
+  references:
+    - https://cwe.mitre.org/data/definitions/134.html
+
+integer_overflow:
+  name: Integer Overflow
+  engine: APPSEC
+  cwe: [CWE-190, CWE-680]
+  owasp: ["A06:2021 Vulnerable and Outdated Components"]
+  severity: HIGH
+  description: A size or count computation can wrap around (for example n * sizeof(item)), producing a small allocation that is later overflowed.
+  impact: Heap overflows and memory corruption.
+  recommendation: Validate sizes against sane maximums, use calloc(n, size) or checked-arithmetic helpers (__builtin_mul_overflow) before allocating.
+  remediation: Check for overflow before allocating or use calloc.
+  examples:
+    c:
+      vulnerable: 'item_t *items = malloc(count * sizeof(item_t));'
+      secure: 'if (count > MAX_ITEMS) return NULL; item_t *items = calloc(count, sizeof(item_t));'
+  references:
+    - https://cwe.mitre.org/data/definitions/190.html
+
+race_condition:
+  name: Race Condition
+  engine: APPSEC
+  cwe: [CWE-362, CWE-367]
+  owasp: ["A04:2021 Insecure Design"]
+  severity: MEDIUM
+  description: The outcome depends on the timing of concurrent operations — a check followed by a use that can be interleaved (TOCTOU), or shared state modified by several threads or goroutines without synchronization.
+  impact: Security checks can be bypassed between check and use; unsynchronized shared state causes corruption and inconsistent authorization decisions.
+  recommendation: Operate on file descriptors rather than paths (open then fstat), use atomic operations, mutexes or channels for shared state, and run tests with a race detector (go test -race, ThreadSanitizer).
+  remediation: Make the check and the use atomic, or protect shared state with synchronization.
+  examples:
+    go:
+      vulnerable: 'go func() { counter++ }()'
+      secure: 'go func() { mu.Lock(); counter++; mu.Unlock() }()  // or atomic.AddInt64(&counter, 1)'
+    c:
+      vulnerable: 'if (access(path, W_OK) == 0) { fd = open(path, O_WRONLY); }'
+      secure: 'fd = open(path, O_WRONLY | O_NOFOLLOW); /* then check permissions with fstat(fd) */'
+  references:
+    - https://cwe.mitre.org/data/definitions/362.html
+    - https://cwe.mitre.org/data/definitions/367.html
+
+unsafe_http_handling:
+  name: Unsafe HTTP Handling
+  engine: APPSEC
+  cwe: [CWE-400, CWE-770]
+  owasp: ["A05:2021 Security Misconfiguration"]
+  severity: MEDIUM
+  description: The HTTP server or handler lacks resource limits — no read/header timeouts, or request bodies read without a size cap.
+  impact: Denial of service through slow clients (Slowloris) or oversized requests that exhaust memory.
+  recommendation: Configure http.Server with ReadHeaderTimeout, ReadTimeout, WriteTimeout and IdleTimeout, and wrap request bodies with http.MaxBytesReader.
+  remediation: Set server timeouts and cap request body sizes.
+  examples:
+    go:
+      vulnerable: 'http.ListenAndServe(":8080", mux)'
+      secure: 'srv := &http.Server{Addr: ":8080", Handler: mux, ReadHeaderTimeout: 5 * time.Second}; srv.ListenAndServe()'
+  references:
+    - https://cwe.mitre.org/data/definitions/400.html

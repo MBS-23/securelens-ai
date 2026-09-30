@@ -1,0 +1,289 @@
+# SecureLens SAST rule pack — C# (.NET, ASP.NET Core, Entity Framework)
+language: csharp
+
+entry_points:
+  - kind: http_route
+    label: HTTP action parameter
+    source_kind: http
+    decorators: ["HttpGet", "HttpPost", "HttpPut", "HttpPatch", "HttpDelete", "Route", "AcceptVerbs",
+                 "__controller_action__"]
+    exclude_params: [cancellationToken, ct, token, logger, context, httpContext, db, dbContext]
+    exclude_annotations: ["CancellationToken", "HttpContext", "ILogger", "IFormFile", "int", "long", "Guid", "bool",
+                          "DateTime", "decimal", "double", "int?", "long?", "Guid?"]
+  - kind: http_route
+    label: HTTP route parameter (minimal API)
+    source_kind: http
+    registrations: ["*.MapGet", "*.MapPost", "*.MapPut", "*.MapDelete", "*.MapPatch", "*.MapMethods"]
+    exclude_params: [ctx, context, db, http]
+  - kind: http_route
+    label: command-line argument
+    source_kind: user_input
+    names: [Main]
+
+sources:
+  - id: csharp.aspnet.request
+    kind: http
+    label: HTTP request data
+    match: ["Request.Query", "Request.Form", "Request.Headers", "Request.Cookies", "Request.QueryString",
+            "Request.Body", "Request.RouteValues", "Request.Path", "Request.Params", "Request.RawUrl",
+            "HttpContext.Request.Query", "HttpContext.Request.Form", "HttpContext.Request.Headers",
+            "*.Request.Query", "*.Request.Form", "*.Request.Headers", "*.Request.Cookies", "*.Request.Body",
+            "Request.QueryString.Get()", "Request[]", "context.Request.Query"]
+  - id: csharp.console
+    kind: user_input
+    label: console input
+    match: ["Console.ReadLine()", "Console.In.ReadLine()"]
+
+sanitizers:
+  - match: ["int.Parse", "Int32.Parse", "long.Parse", "Int64.Parse", "Guid.Parse", "decimal.Parse", "double.Parse",
+            "bool.Parse", "(int)", "(long)", "int.TryParse", "Convert.ToInt32", "Convert.ToInt64"]
+    classes: ["*"]
+  - match: ["HttpUtility.HtmlEncode", "WebUtility.HtmlEncode", "HtmlEncoder.Default.Encode", "*.HtmlEncode",
+            "AntiXssEncoder.HtmlEncode", "Encoder.HtmlEncode", "*.Sanitize"]
+    classes: [xss]
+  - match: ["Path.GetFileName", "*.GetFileName"]
+    classes: [path_traversal]
+  - match: ["HttpUtility.UrlEncode", "WebUtility.UrlEncode", "Uri.EscapeDataString"]
+    classes: [xss, open_redirect, command_injection]
+  - match: ["*.HashPassword", "BCrypt.HashPassword", "*.Hash"]
+    classes: [plaintext_password]
+
+sinks:
+  - id: SL-CS-SQLI-001
+    vuln_class: sql_injection
+    title: SQL query built from untrusted input
+    message: A SQL statement is constructed from data that is not a SqlParameter
+    severity: CRITICAL
+    match: ["SqlCommand", "SqlDataAdapter", "OleDbCommand", "OdbcCommand", "NpgsqlCommand", "MySqlCommand",
+            "SqliteCommand", "*.ExecuteSqlRaw", "*.ExecuteSqlRawAsync", "*.FromSqlRaw", "*.ExecuteSqlCommand",
+            "*.SqlQueryRaw", "*.Query", "*.QueryAsync", "*.QueryFirst", "*.QueryFirstOrDefault", "*.QuerySingle",
+            "*.Execute", "*.ExecuteAsync", "*.ExecuteScalar"]
+    args: [0]
+    strings_only: true
+    unknown_origin: dynamic
+    unknown_origin_confidence: MEDIUM
+  - id: SL-CS-SQLI-002
+    vuln_class: sql_injection
+    title: SQL command text built from untrusted input
+    severity: CRITICAL
+    assign: ["*.CommandText"]
+    unknown_origin: dynamic
+    unknown_origin_confidence: MEDIUM
+  - id: SL-CS-XSS-001
+    vuln_class: xss
+    title: Untrusted data rendered as raw HTML
+    severity: HIGH
+    match: ["Html.Raw", "*.Raw", "HtmlString", "MarkupString", "Response.Write", "*.Response.WriteAsync",
+            "*.WriteAsync", "Content"]
+    args: [0]
+    derived: skip
+    source_kinds: [http, llm_output]
+    remap: {llm_output: llm_output_handling}
+  - id: SL-CS-CMDI-001
+    vuln_class: command_injection
+    title: Process started with untrusted input
+    severity: CRITICAL
+    match: ["Process.Start", "ProcessStartInfo"]
+    all_args: true
+    object_props: [FileName, Arguments]
+    unknown_origin: dynamic
+    unknown_origin_confidence: MEDIUM
+  - id: SL-CS-CMDI-002
+    vuln_class: command_injection
+    title: Process arguments built from untrusted input
+    severity: CRITICAL
+    assign: ["*.Arguments", "*.FileName"]
+    source_kinds: [http, user_input, llm_output]
+  - id: SL-CS-PATH-001
+    vuln_class: path_traversal
+    title: File path built from untrusted input
+    severity: HIGH
+    match: ["File.ReadAllText", "File.ReadAllBytes", "File.ReadAllLines", "File.WriteAllText", "File.WriteAllBytes",
+            "File.Open", "File.OpenRead", "File.OpenWrite", "File.Delete", "File.Copy", "File.Move", "File.Exists",
+            "FileStream", "StreamReader", "StreamWriter", "Directory.GetFiles", "Directory.Delete",
+            "PhysicalFile", "*.PhysicalFile", "File", "System.IO.File.ReadAllText"]
+    all_args: true
+    source_kinds: [http, llm_output]
+  - id: SL-CS-SSRF-001
+    vuln_class: ssrf
+    title: Server-side request to a URL controlled by the user
+    severity: HIGH
+    match: ["*.GetAsync", "*.GetStringAsync", "*.GetByteArrayAsync", "*.GetStreamAsync", "*.PostAsync",
+            "*.PutAsync", "*.DeleteAsync", "*.SendAsync", "WebRequest.Create", "HttpWebRequest.Create",
+            "*.DownloadString", "*.DownloadData", "*.OpenRead", "HttpRequestMessage", "Uri"]
+    all_args: true
+    source_kinds: [http, llm_output]
+  - id: SL-CS-REDIRECT-001
+    vuln_class: open_redirect
+    title: Redirect to a URL controlled by the user
+    severity: MEDIUM
+    match: ["Redirect", "RedirectPermanent", "*.Redirect", "Response.Redirect"]
+    args: [0]
+    source_kinds: [http]
+  - id: SL-CS-DESER-001
+    vuln_class: insecure_deserialization
+    title: Untrusted data deserialized with type information
+    severity: CRITICAL
+    match: ["*.Deserialize", "JsonConvert.DeserializeObject", "*.ReadObject"]
+    args: [0]
+    source_kinds: [http]
+  - id: SL-CS-LDAP-001
+    vuln_class: ldap_injection
+    title: LDAP filter built from untrusted input
+    severity: HIGH
+    match: ["DirectorySearcher", "*.FindOne", "*.FindAll"]
+    all_args: true
+    source_kinds: [http]
+  - id: SL-CS-LDAP-002
+    vuln_class: ldap_injection
+    title: LDAP filter built from untrusted input
+    severity: HIGH
+    assign: ["*.Filter"]
+    source_kinds: [http]
+
+checks:
+  - id: SL-CS-DESER-002
+    kind: call
+    vuln_class: insecure_deserialization
+    title: Dangerous formatter used for deserialization
+    message: BinaryFormatter, SoapFormatter, NetDataContractSerializer, LosFormatter and ObjectStateFormatter can execute code during deserialization
+    severity: HIGH
+    confidence: HIGH
+    match: ["BinaryFormatter", "SoapFormatter", "NetDataContractSerializer", "LosFormatter", "ObjectStateFormatter"]
+    cwe: [CWE-502]
+  - id: SL-CS-DESER-003
+    kind: call
+    vuln_class: insecure_deserialization
+    title: Json.NET TypeNameHandling enables polymorphic deserialization
+    severity: HIGH
+    confidence: HIGH
+    match: ["JsonSerializerSettings", "JsonSerializer"]
+    option_contains: {TypeNameHandling: All}
+    cwe: [CWE-502]
+  - id: SL-CS-DESER-004
+    kind: call
+    vuln_class: insecure_deserialization
+    title: Json.NET TypeNameHandling enables polymorphic deserialization
+    severity: HIGH
+    confidence: HIGH
+    match: ["JsonSerializerSettings", "JsonSerializer"]
+    option_contains: {TypeNameHandling: Auto}
+    cwe: [CWE-502]
+  - id: SL-CS-XXE-001
+    kind: call
+    vuln_class: xxe
+    title: XML reader configured to process DTDs
+    severity: HIGH
+    confidence: HIGH
+    match: ["XmlReaderSettings"]
+    option_contains: {DtdProcessing: Parse}
+    cwe: [CWE-611]
+  - id: SL-CS-XXE-002
+    kind: assign
+    vuln_class: xxe
+    title: XML resolver enabled
+    message: Setting an XmlUrlResolver lets documents load external entities
+    severity: HIGH
+    confidence: MEDIUM
+    target: ["*.XmlResolver"]
+    cwe: [CWE-611]
+  - id: SL-CS-CRYPTO-001
+    kind: call
+    vuln_class: weak_cryptography
+    title: Weak hash algorithm (MD5/SHA-1)
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["MD5.Create", "SHA1.Create", "MD5CryptoServiceProvider", "SHA1CryptoServiceProvider", "SHA1Managed",
+            "MD5.HashData", "SHA1.HashData", "HMACMD5", "HMACSHA1"]
+    context_regex: "(?i)pass(word|wd)?|pwd|secret"
+    context_severity: HIGH
+    context_cwe: [CWE-916]
+    cwe: [CWE-328]
+  - id: SL-CS-CRYPTO-002
+    kind: call
+    vuln_class: weak_cryptography
+    title: Broken cipher (DES, 3DES, RC2)
+    severity: HIGH
+    confidence: HIGH
+    match: ["DES.Create", "TripleDES.Create", "RC2.Create", "DESCryptoServiceProvider", "TripleDESCryptoServiceProvider",
+            "RC2CryptoServiceProvider"]
+    cwe: [CWE-327]
+  - id: SL-CS-CRYPTO-003
+    kind: attribute
+    vuln_class: weak_cryptography
+    title: Block cipher in ECB mode
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["CipherMode.ECB"]
+    cwe: [CWE-327]
+  - id: SL-CS-RAND-001
+    kind: call
+    vuln_class: weak_randomness
+    title: System.Random used for a security value
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["Random", "*.Next", "*.NextBytes"]
+    assigned_name_regex: "(?i)token|secret|passw|nonce|salt|otp|key|session|csrf|reset|code$|pin$"
+    cwe: [CWE-338]
+  - id: SL-CS-TLS-001
+    kind: assign
+    vuln_class: insecure_tls
+    title: Certificate validation callback accepts every certificate
+    severity: HIGH
+    confidence: MEDIUM
+    target: ["*.ServerCertificateValidationCallback", "*.ServerCertificateCustomValidationCallback",
+             "ServicePointManager.ServerCertificateValidationCallback"]
+    cwe: [CWE-295]
+  - id: SL-CS-TLS-002
+    kind: attribute
+    vuln_class: insecure_tls
+    title: Certificate validation disabled
+    severity: HIGH
+    confidence: HIGH
+    match: ["HttpClientHandler.DangerousAcceptAnyServerCertificateValidator"]
+    cwe: [CWE-295]
+  - id: SL-CS-AUTH-001
+    kind: call
+    vuln_class: insecure_authentication
+    title: JWT validation weakened
+    message: Token validation parameters disable signature, lifetime, issuer or audience checks
+    severity: HIGH
+    confidence: HIGH
+    match: ["TokenValidationParameters"]
+    option_contains: {ValidateIssuerSigningKey: "false"}
+    cwe: [CWE-347]
+  - id: SL-CS-AUTH-002
+    kind: call
+    vuln_class: insecure_authentication
+    title: JWT validation weakened
+    severity: HIGH
+    confidence: HIGH
+    match: ["TokenValidationParameters"]
+    option_contains: {RequireSignedTokens: "false"}
+    cwe: [CWE-347]
+  - id: SL-CS-AUTH-003
+    kind: call
+    vuln_class: insecure_authentication
+    title: JWT lifetime validation disabled
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["TokenValidationParameters"]
+    option_contains: {ValidateLifetime: "false"}
+    cwe: [CWE-613]
+  - id: SL-CS-CSRF-001
+    kind: decorator
+    vuln_class: missing_csrf_protection
+    title: Anti-forgery validation disabled
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["IgnoreAntiforgeryToken"]
+    cwe: [CWE-352]
+  - id: SL-CS-COOKIE-001
+    kind: call
+    vuln_class: insecure_authentication
+    title: Cookie security flag disabled
+    severity: LOW
+    confidence: HIGH
+    match: ["CookieOptions"]
+    option_contains: {HttpOnly: "false"}
+    cwe: [CWE-1004]

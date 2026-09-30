@@ -1,0 +1,214 @@
+# SecureLens SAST rule pack — Go (net/http, gin, echo, fiber, chi, gorilla/mux)
+language: go
+
+sources:
+  - id: go.http.request
+    kind: http
+    label: HTTP request data
+    match: ["r.URL.Query()", "r.URL.RawQuery", "r.URL.Path", "r.FormValue()", "r.PostFormValue()", "r.Form",
+            "r.PostForm", "r.Header.Get()", "r.Header", "r.Body", "r.Cookie()", "r.Cookies()", "r.Referer()",
+            "r.UserAgent()", "r.MultipartForm", "r.PathValue()", "req.URL.Query()", "req.FormValue()",
+            "req.PostFormValue()", "req.Header.Get()", "req.Body", "req.URL.Path", "request.URL.Query()",
+            "request.FormValue()", "mux.Vars()", "chi.URLParam()", "c.Query()", "c.DefaultQuery()", "c.Param()",
+            "c.PostForm()", "c.DefaultPostForm()", "c.GetHeader()", "c.Cookie()", "c.QueryParam()", "c.FormValue()",
+            "c.Params()", "c.Body()", "c.GetRawData()", "c.Request.URL.Query()", "c.Request.Body", "ctx.Query()",
+            "ctx.Param()", "ctx.FormValue()", "ctx.QueryParam()", "ctx.Params()"]
+  - id: go.cli
+    kind: user_input
+    label: command-line or console input
+    match: ["os.Args", "flag.Arg()", "flag.Args()", "*.ReadString()", "bufio.NewScanner().Text()", "*.Text()"]
+
+sanitizers:
+  - match: ["strconv.Atoi", "strconv.ParseInt", "strconv.ParseUint", "strconv.ParseFloat", "strconv.ParseBool",
+            "uuid.Parse", "uuid.MustParse", "strconv.Itoa", "len"]
+    classes: ["*"]
+  - match: ["html.EscapeString", "template.HTMLEscapeString", "template.JSEscapeString", "*.Sanitize",
+            "bluemonday.UGCPolicy().Sanitize", "url.QueryEscape", "url.PathEscape"]
+    classes: [xss, open_redirect]
+  - match: ["filepath.Base", "path.Base"]
+    classes: [path_traversal]
+  - match: ["bcrypt.GenerateFromPassword", "*.GenerateFromPassword", "argon2.IDKey", "scrypt.Key"]
+    classes: [plaintext_password]
+
+sinks:
+  - id: SL-GO-SQLI-001
+    vuln_class: sql_injection
+    title: SQL query built from untrusted input
+    message: A SQL statement is built with string formatting instead of query placeholders
+    severity: CRITICAL
+    match: ["*.Query", "*.QueryRow", "*.Exec", "*.Prepare", "*.Raw", "*.NamedExec", "*.Queryx", "*.QueryRowx",
+            "*.MustExec", "*.Where", "*.Order", "*.Having"]
+    args: [0]
+    strings_only: true
+    unknown_origin: dynamic
+    unknown_origin_confidence: MEDIUM
+  - id: SL-GO-SQLI-002
+    vuln_class: sql_injection
+    title: SQL query built from untrusted input
+    message: A SQL statement is built with string formatting instead of query placeholders
+    severity: CRITICAL
+    match: ["*.QueryContext", "*.QueryRowContext", "*.ExecContext", "*.PrepareContext", "db.Get", "db.Select",
+            "*.db.Get", "*.db.Select", "tx.Get", "tx.Select", "*.QueryxContext", "*.GetContext", "*.SelectContext"]
+    args: [1]
+    strings_only: true
+    unknown_origin: dynamic
+    unknown_origin_confidence: MEDIUM
+  - id: SL-GO-CMDI-001
+    vuln_class: command_injection
+    title: OS command built from untrusted input
+    message: exec.Command runs untrusted input, directly or through a shell (sh -c)
+    severity: CRITICAL
+    match: ["exec.Command", "exec.CommandContext", "syscall.Exec", "os.StartProcess"]
+    all_args: true
+    unknown_origin: dynamic
+    unknown_origin_confidence: MEDIUM
+  - id: SL-GO-PATH-001
+    vuln_class: path_traversal
+    title: File path built from untrusted input
+    message: A filesystem path derives from request data; filepath.Join and filepath.Clean do not confine it
+    severity: HIGH
+    match: ["os.Open", "os.OpenFile", "os.ReadFile", "os.WriteFile", "os.Create", "os.Remove", "os.RemoveAll",
+            "os.Mkdir", "os.MkdirAll", "os.Rename", "os.Stat", "ioutil.ReadFile", "ioutil.WriteFile",
+            "http.ServeFile", "c.File", "c.Attachment", "c.SendFile", "os.ReadDir"]
+    all_args: true
+    source_kinds: [http]
+  - id: SL-GO-SSRF-001
+    vuln_class: ssrf
+    title: Server-side request to a URL controlled by the user
+    severity: HIGH
+    match: ["http.Get", "http.Post", "http.Head", "http.PostForm", "http.NewRequest", "http.NewRequestWithContext",
+            "*.Get", "*.Post", "*.Head", "net.Dial", "net.DialTimeout", "url.Parse"]
+    all_args: true
+    source_kinds: [http]
+    derived: medium
+  - id: SL-GO-XSS-001
+    vuln_class: xss
+    title: Untrusted data written into the HTTP response
+    message: Request data is written to the ResponseWriter without HTML escaping
+    severity: HIGH
+    match: ["w.Write", "fmt.Fprintf", "fmt.Fprint", "fmt.Fprintln", "io.WriteString", "c.String", "c.Data",
+            "c.HTML", "c.SendString", "*.Write"]
+    all_args: true
+    derived: skip
+    source_kinds: [http]
+  - id: SL-GO-XSS-002
+    vuln_class: xss
+    title: Untrusted data marked as safe HTML
+    message: template.HTML/JS/URL bypasses html/template's contextual escaping
+    severity: HIGH
+    match: ["template.HTML", "template.JS", "template.URL", "template.HTMLAttr", "template.CSS"]
+    args: [0]
+    source_kinds: [http]
+  - id: SL-GO-REDIRECT-001
+    vuln_class: open_redirect
+    title: Redirect to a URL controlled by the user
+    severity: MEDIUM
+    match: ["http.Redirect", "c.Redirect"]
+    all_args: true
+    source_kinds: [http]
+
+checks:
+  - id: SL-GO-TLS-001
+    kind: call
+    vuln_class: insecure_tls
+    title: TLS certificate verification disabled
+    severity: HIGH
+    confidence: HIGH
+    match: ["tls.Config", "*.Config"]
+    option_equals: {InsecureSkipVerify: true}
+    cwe: [CWE-295]
+  - id: SL-GO-TLS-002
+    kind: call
+    vuln_class: insecure_tls
+    title: Obsolete TLS version allowed
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["tls.Config"]
+    option_contains: {MinVersion: VersionTLS10}
+    cwe: [CWE-326]
+  - id: SL-GO-CRYPTO-001
+    kind: call
+    vuln_class: weak_cryptography
+    title: Weak hash algorithm (MD5/SHA-1)
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["md5.New", "md5.Sum", "sha1.New", "sha1.Sum", "crypto/md5.New", "crypto/md5.Sum", "crypto/sha1.New",
+            "crypto/sha1.Sum"]
+    context_regex: "(?i)pass(word|wd)?|pwd|secret"
+    context_severity: HIGH
+    context_cwe: [CWE-916]
+    cwe: [CWE-328]
+  - id: SL-GO-CRYPTO-002
+    kind: call
+    vuln_class: weak_cryptography
+    title: Broken cipher (DES, 3DES, RC4)
+    severity: HIGH
+    confidence: HIGH
+    match: ["des.NewCipher", "des.NewTripleDESCipher", "rc4.NewCipher", "crypto/des.NewCipher", "crypto/rc4.NewCipher"]
+    cwe: [CWE-327]
+  - id: SL-GO-RAND-001
+    kind: call
+    vuln_class: weak_randomness
+    title: math/rand used for a security value
+    message: math/rand is deterministic; use crypto/rand for tokens and keys
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["math/rand.Intn", "math/rand.Int", "math/rand.Int63", "math/rand.Uint32", "math/rand.Read",
+            "math/rand.Int31", "math/rand/v2.IntN", "math/rand/v2.Int"]
+    assigned_name_regex: "(?i)token|secret|passw|nonce|salt|otp|key|session|csrf|reset|code$|pin$"
+    cwe: [CWE-338]
+  - id: SL-GO-HTTP-001
+    kind: call
+    vuln_class: unsafe_http_handling
+    title: HTTP server without timeouts
+    message: http.ListenAndServe uses a server with no read/write timeouts, which is vulnerable to Slowloris-style resource exhaustion
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["http.ListenAndServe", "http.ListenAndServeTLS", "net/http.ListenAndServe"]
+    cwe: [CWE-400]
+  - id: SL-GO-HTTP-002
+    kind: call
+    vuln_class: unsafe_http_handling
+    title: Request body read without a size limit
+    message: io.ReadAll on the request body can exhaust memory; wrap it with http.MaxBytesReader
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["io.ReadAll", "ioutil.ReadAll"]
+    arg_attr: {0: ["r.Body", "req.Body", "request.Body", "c.Request.Body"]}
+    unless_function_mentions: ["http.MaxBytesReader", "io.LimitReader"]
+    cwe: [CWE-770]
+  - id: SL-GO-HTTP-003
+    kind: call
+    vuln_class: unsafe_http_handling
+    title: http.Server without ReadHeaderTimeout
+    severity: LOW
+    confidence: MEDIUM
+    match: ["http.Server", "net/http.Server"]
+    option_absent_or_not_in: {}
+    unless_function_mentions: ["*.ReadHeaderTimeout", "*.ReadTimeout"]
+    cwe: [CWE-400]
+  - id: SL-GO-RACE-001
+    kind: goroutine_capture_write
+    vuln_class: race_condition
+    title: Goroutine writes a shared variable without synchronization
+    severity: MEDIUM
+    confidence: LOW
+    exploitability: POSSIBLE
+    cwe: [CWE-362]
+  - id: SL-GO-UNSAFE-001
+    kind: attribute
+    vuln_class: dangerous_api
+    title: unsafe.Pointer bypasses Go memory safety
+    severity: LOW
+    confidence: HIGH
+    match: ["unsafe.Pointer"]
+    cwe: [CWE-242]
+  - id: SL-GO-TEMPLATE-001
+    kind: call
+    vuln_class: xss
+    title: text/template used to render HTML
+    message: text/template does not escape HTML; use html/template for web output
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["text/template.New", "text/template.Must", "text/template.ParseFiles"]
+    cwe: [CWE-79]

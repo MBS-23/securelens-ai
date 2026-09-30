@@ -1,0 +1,283 @@
+# SecureLens SAST rule pack — Java (Servlet, Spring, JAX-RS)
+language: java
+
+entry_points:
+  - kind: http_route
+    label: HTTP request parameter
+    source_kind: http
+    decorators: ["GetMapping", "PostMapping", "PutMapping", "PatchMapping", "DeleteMapping", "RequestMapping",
+                 "GET", "POST", "PUT", "DELETE", "PATCH", "Path"]
+    exclude_params: [response, resp, model, principal, authentication, bindingResult, session, locale, redirectAttributes]
+    exclude_annotations: ["HttpServletResponse", "HttpServletRequest", "Model", "ModelMap", "Principal", "Authentication",
+                          "BindingResult", "HttpSession", "Locale", "Pageable", "RedirectAttributes", "UriComponentsBuilder",
+                          "int", "long", "Integer", "Long", "UUID", "boolean", "Boolean", "LocalDate", "double"]
+  - kind: http_route
+    label: command-line argument
+    source_kind: user_input
+    names: [main]
+
+sources:
+  - id: java.servlet.request
+    kind: http
+    label: HTTP request data
+    match: ["*.getParameter()", "*.getParameterValues()", "*.getParameterMap()", "*.getHeader()", "*.getHeaders()",
+            "*.getQueryString()", "*.getRequestURI()", "*.getRequestURL()", "*.getPathInfo()", "*.getInputStream()",
+            "*.getReader()", "*.getCookies()", "request.getParameter()", "request.getHeader()",
+            "*.getPart()", "*.getParts()", "*.getSubmittedFileName()", "*.getOriginalFilename()"]
+  - id: java.cli
+    kind: user_input
+    label: console input
+    match: ["System.in", "System.console().readLine()", "*.readLine()", "scanner.nextLine()", "*.nextLine()"]
+  - id: java.llm.output
+    kind: llm_output
+    label: LLM completion output
+    match: ["*.chat().completions().create()", "*.createChatCompletion()", "*.generate()", "*.chat()", "*.call()"]
+
+sanitizers:
+  - match: ["Integer.parseInt", "Integer.valueOf", "Long.parseLong", "Long.valueOf", "Double.parseDouble",
+            "UUID.fromString", "Boolean.parseBoolean", "(int)", "(long)", "(double)", "Short.parseShort"]
+    classes: ["*"]
+  - match: ["StringEscapeUtils.escapeHtml4", "StringEscapeUtils.escapeHtml", "HtmlUtils.htmlEscape", "Encode.forHtml",
+            "Encode.forHtmlAttribute", "ESAPI.encoder().encodeForHTML", "*.encodeForHTML", "Jsoup.clean",
+            "HtmlEscapers.htmlEscaper().escape", "*.sanitize"]
+    classes: [xss]
+  - match: ["FilenameUtils.getName", "Paths.get().getFileName", "*.getFileName", "FilenameUtils.normalize"]
+    classes: [path_traversal]
+  - match: ["LdapEncoder.filterEncode", "*.filterEncode", "LdapNameBuilder.newInstance", "Rdn.escapeValue"]
+    classes: [ldap_injection]
+  - match: ["URLEncoder.encode", "UriUtils.encode"]
+    classes: [xss, open_redirect, command_injection]
+  - match: ["*.encode", "BCrypt.hashpw", "*.hashpw", "passwordEncoder.encode", "*.hash"]
+    classes: [plaintext_password]
+
+sinks:
+  - id: SL-JAVA-SQLI-001
+    vuln_class: sql_injection
+    title: SQL query built from untrusted input
+    message: A SQL statement is constructed from data that is not a bound parameter
+    severity: CRITICAL
+    match: ["*.executeQuery", "*.executeUpdate", "*.execute", "*.addBatch", "*.prepareStatement", "*.prepareCall",
+            "*.createQuery", "*.createNativeQuery", "*.createSQLQuery", "*.queryForObject", "*.queryForList",
+            "*.queryForMap", "*.queryForRowSet", "*.batchUpdate", "jdbcTemplate.query", "jdbcTemplate.update",
+            "*.jdbcTemplate.query", "*.jdbcTemplate.update", "*.nativeQuery"]
+    args: [0]
+    strings_only: true
+    unknown_origin: dynamic
+    unknown_origin_confidence: MEDIUM
+    remap: {llm_output: llm_output_handling}
+  - id: SL-JAVA-CMDI-001
+    vuln_class: command_injection
+    title: OS command built from untrusted input
+    severity: CRITICAL
+    match: ["Runtime.getRuntime().exec", "*.exec", "ProcessBuilder", "*.command"]
+    all_args: true
+    unknown_origin: dynamic
+    unknown_origin_confidence: MEDIUM
+    remap: {llm_output: llm_output_handling}
+  - id: SL-JAVA-PATH-001
+    vuln_class: path_traversal
+    title: File path built from untrusted input
+    severity: HIGH
+    match: ["File", "java.io.File", "FileInputStream", "FileOutputStream", "FileReader", "FileWriter",
+            "RandomAccessFile", "Paths.get", "Path.of", "Files.readAllBytes", "Files.readAllLines", "Files.readString",
+            "Files.newInputStream", "Files.newBufferedReader", "Files.write", "Files.delete", "Files.copy",
+            "Files.move", "*.resolve", "*.transferTo", "ClassPathResource", "FileSystemResource"]
+    all_args: true
+    source_kinds: [http, llm_output]
+    remap: {llm_output: llm_output_handling}
+  - id: SL-JAVA-SSRF-001
+    vuln_class: ssrf
+    title: Server-side request to a URL controlled by the user
+    severity: HIGH
+    match: ["URL", "java.net.URL", "URI.create", "*.getForObject", "*.getForEntity", "*.postForObject",
+            "*.postForEntity", "*.exchange", "HttpRequest.newBuilder", "*.uri", "Jsoup.connect", "*.openConnection",
+            "new URI", "URI"]
+    args: [0]
+    source_kinds: [http, llm_output]
+    remap: {llm_output: llm_output_handling}
+  - id: SL-JAVA-XSS-001
+    vuln_class: xss
+    title: Untrusted data written into the HTTP response
+    severity: HIGH
+    match: ["*.getWriter().print", "*.getWriter().println", "*.getWriter().write", "*.getWriter().append",
+            "*.getWriter().printf", "*.getOutputStream().print", "*.getOutputStream().println", "out.println",
+            "out.print", "out.write"]
+    all_args: true
+    derived: skip
+    source_kinds: [http, llm_output]
+    remap: {llm_output: llm_output_handling}
+  - id: SL-JAVA-REDIRECT-001
+    vuln_class: open_redirect
+    title: Redirect to a URL controlled by the user
+    severity: MEDIUM
+    match: ["*.sendRedirect", "RedirectView", "ModelAndView"]
+    args: [0]
+    source_kinds: [http]
+  - id: SL-JAVA-LDAP-001
+    vuln_class: ldap_injection
+    title: LDAP filter built from untrusted input
+    message: Unescaped input in an LDAP search filter can alter the query and bypass authentication
+    severity: HIGH
+    match: ["*.search", "*.searchForObject", "*.authenticate", "LdapQueryBuilder.query().filter"]
+    all_args: true
+    source_kinds: [http]
+  - id: SL-JAVA-JNDI-001
+    vuln_class: jndi_injection
+    title: JNDI lookup of a name controlled by the user
+    message: Looking up attacker-controlled JNDI names can load remote classes (the Log4Shell class of issue)
+    severity: CRITICAL
+    match: ["*.lookup", "InitialContext().lookup", "*.lookupLink", "JndiTemplate.lookup"]
+    args: [0]
+    source_kinds: [http, user_input]
+  - id: SL-JAVA-EL-001
+    vuln_class: expression_injection
+    title: Expression language evaluated from untrusted input
+    message: SpEL/OGNL/MVEL expressions built from user input allow code execution
+    severity: CRITICAL
+    match: ["*.parseExpression", "*.createValueExpression", "Ognl.getValue", "MVEL.eval", "*.evaluate"]
+    args: [0]
+    source_kinds: [http, llm_output]
+  - id: SL-JAVA-DESER-001
+    vuln_class: insecure_deserialization
+    title: Untrusted data deserialized
+    severity: CRITICAL
+    match: ["ObjectInputStream", "XMLDecoder", "*.fromXML", "SerializationUtils.deserialize", "*.load", "*.loadAs"]
+    args: [0]
+    source_kinds: [http]
+  - id: SL-JAVA-XXE-001
+    vuln_class: xxe
+    title: XML from the request parsed by a default parser
+    severity: HIGH
+    match: ["builder.parse", "documentBuilder.parse", "db.parse", "dBuilder.parse", "*.newDocumentBuilder().parse",
+            "saxParser.parse", "*.newSAXParser().parse", "xmlReader.parse", "*.getXMLReader().parse", "*.unmarshal",
+            "*.createXMLStreamReader", "*.createXMLEventReader"]
+    args: [0]
+    source_kinds: [http]
+    confidence: MEDIUM
+  - id: SL-JAVA-AUTH-001
+    vuln_class: insecure_authentication
+    title: Password stored without hashing
+    severity: HIGH
+    match: ["*.setPassword"]
+    args: [0]
+    source_kinds: [http]
+    cwe: [CWE-256]
+
+checks:
+  - id: SL-JAVA-XXE-002
+    kind: call
+    vuln_class: xxe
+    title: XML parser factory created without disabling external entities
+    message: DocumentBuilderFactory/SAXParserFactory/XMLInputFactory resolve DTDs and external entities unless configured otherwise
+    severity: HIGH
+    confidence: MEDIUM
+    match: ["DocumentBuilderFactory.newInstance", "SAXParserFactory.newInstance", "XMLInputFactory.newInstance",
+            "XMLInputFactory.newFactory", "TransformerFactory.newInstance", "SchemaFactory.newInstance",
+            "SAXReader", "SAXBuilder"]
+    unless_function_mentions: ["*.setFeature", "*.setProperty", "*.setExpandEntityReferences", "*.setXIncludeAware",
+                               "*.setAttribute"]
+    cwe: [CWE-611]
+  - id: SL-JAVA-DESER-002
+    kind: call
+    vuln_class: insecure_deserialization
+    title: Java native deserialization
+    message: ObjectInputStream.readObject deserializes arbitrary classes; untrusted streams enable gadget-chain RCE
+    severity: HIGH
+    confidence: MEDIUM
+    match: ["*.readObject", "*.readUnshared"]
+    receiver_origin: ["new:ObjectInputStream", "ObjectInputStream"]
+    cwe: [CWE-502]
+  - id: SL-JAVA-DESER-003
+    kind: call
+    vuln_class: insecure_deserialization
+    title: Jackson polymorphic typing enabled globally
+    severity: HIGH
+    confidence: HIGH
+    match: ["*.enableDefaultTyping", "*.activateDefaultTyping"]
+    cwe: [CWE-502]
+  - id: SL-JAVA-CRYPTO-001
+    kind: call
+    vuln_class: weak_cryptography
+    title: Weak hash algorithm (MD5/SHA-1)
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["MessageDigest.getInstance", "DigestUtils.md5Hex", "DigestUtils.sha1Hex"]
+    arg_equals: {0: [md5, sha1, "sha-1", md2, md4]}
+    context_regex: "(?i)pass(word|wd)?|pwd|secret"
+    context_severity: HIGH
+    context_cwe: [CWE-916]
+    cwe: [CWE-328]
+  - id: SL-JAVA-CRYPTO-002
+    kind: call
+    vuln_class: weak_cryptography
+    title: Weak cipher or ECB mode
+    message: DES, 3DES, RC4, Blowfish and ECB mode are broken; plain "AES" defaults to AES/ECB/PKCS5Padding
+    severity: HIGH
+    confidence: HIGH
+    match: ["Cipher.getInstance"]
+    arg_contains: {0: [des, rc4, rc2, blowfish, "/ecb/", arcfour]}
+    cwe: [CWE-327]
+  - id: SL-JAVA-CRYPTO-003
+    kind: call
+    vuln_class: weak_cryptography
+    title: Cipher requested without mode (defaults to ECB)
+    severity: MEDIUM
+    confidence: HIGH
+    match: ["Cipher.getInstance"]
+    arg_equals: {0: [aes]}
+    cwe: [CWE-327]
+  - id: SL-JAVA-RAND-001
+    kind: call
+    vuln_class: weak_randomness
+    title: java.util.Random used for a security value
+    severity: MEDIUM
+    confidence: MEDIUM
+    match: ["Random", "*.nextInt", "*.nextLong", "Math.random", "RandomStringUtils.random", "RandomStringUtils.randomAlphanumeric"]
+    assigned_name_regex: "(?i)token|secret|passw|nonce|salt|otp|key|session|csrf|reset|code$|pin$"
+    cwe: [CWE-338]
+  - id: SL-JAVA-TLS-001
+    kind: call
+    vuln_class: insecure_tls
+    title: Hostname verification disabled
+    severity: HIGH
+    confidence: HIGH
+    match: ["*.setHostnameVerifier", "*.setDefaultHostnameVerifier"]
+    arg_attr: {0: ["ALLOW_ALL_HOSTNAME_VERIFIER", "NoopHostnameVerifier.INSTANCE", "INSTANCE"]}
+    cwe: [CWE-295]
+  - id: SL-JAVA-TLS-002
+    kind: call
+    vuln_class: insecure_tls
+    title: Certificate validation disabled (trust-all manager)
+    severity: HIGH
+    confidence: MEDIUM
+    match: ["NoopHostnameVerifier", "TrustAllStrategy", "TrustSelfSignedStrategy", "InsecureTrustManagerFactory.INSTANCE"]
+    cwe: [CWE-295]
+  - id: SL-JAVA-CSRF-001
+    kind: call
+    vuln_class: missing_csrf_protection
+    title: Spring Security CSRF protection disabled
+    message: CSRF protection is disabled; this is only safe for stateless APIs that do not use cookie authentication
+    severity: MEDIUM
+    confidence: LOW
+    match: ["*.csrf().disable", "*.disable"]
+    receiver_origin: ["*.csrf", "csrf"]
+    cwe: [CWE-352]
+  - id: SL-JAVA-SECRET-001
+    kind: call
+    vuln_class: hardcoded_secret
+    title: Hardcoded database password
+    severity: HIGH
+    confidence: HIGH
+    match: ["DriverManager.getConnection"]
+    min_args: 3
+    arg_literal: {2: 4}
+    cwe: [CWE-798]
+  - id: SL-JAVA-COOKIE-001
+    kind: call
+    vuln_class: insecure_authentication
+    title: Cookie flag explicitly disabled
+    severity: LOW
+    confidence: HIGH
+    match: ["*.setHttpOnly", "*.setSecure"]
+    arg_equals: {0: ["false"]}
+    cwe: [CWE-614]
