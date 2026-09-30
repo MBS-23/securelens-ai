@@ -1,0 +1,8 @@
+# Shell scripts must keep Unix line endings (they break with CRLF, e.g. on Windows checkouts used from WSL).
+*.sh text eol=lf
+# Binary media and fonts.
+*.png binary
+*.webp binary
+*.webm binary
+*.woff binary
+*.woff2 binary
