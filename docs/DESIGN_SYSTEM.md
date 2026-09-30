@@ -35,13 +35,13 @@ Brand: `brand/BRAND.md` (mark, lockups, colours, motion). Target flows:
 
 ## 2. Typography
 
-Self-hosted IBM Plex (SIL Open Font License) — one superfamily, three voices:
+Bundled locally (SIL Open Font License), three voices — see `brand/BRAND.md`:
 
 | Role | Family | Use |
 |---|---|---|
-| Interface | IBM Plex Sans 400/500/600 | Navigation, headings, tables, forms |
-| Reading | IBM Plex Serif 400/600 | Long-form lesson prose |
-| Code & data | IBM Plex Mono 400/500 | Code, paths, IDs, numbers in evidence |
+| Interface | Inter (variable) 400–700 | Navigation, body, tables, forms |
+| Display | Manrope 600–800 | Page titles, wordmark, taglines, marketing headings |
+| Code & data | JetBrains Mono 400–500 | Code, paths, IDs, evidence |
 
 Scale (px): 12 · 13 · 14 · 16 · 18 · 22 · 28 · 36. Headings use tight leading
 (1.15–1.25) and slight negative tracking; body text 1.55–1.65. Numbers in
@@ -50,20 +50,23 @@ metrics and tables use tabular figures. Eyebrow labels are 11–12 px, uppercase
 
 ## 3. Colour
 
-Semantic tokens (CSS custom properties) with a light and a dark theme; the
-default follows the operating system and can be switched.
+Semantic tokens (CSS custom properties in `frontend/src/index.css`) built on the
+brand palette, with a dark (default) and a light theme:
 
-| Token | Purpose |
-|---|---|
-| `--bg`, `--surface`, `--surface-2`, `--surface-3` | Page, raised areas, code and input wells |
-| `--line`, `--line-strong` | Hairline rules, table borders, focus-adjacent borders |
-| `--ink`, `--ink-2`, `--muted` | Primary, secondary and tertiary text |
-| `--accent`, `--accent-ink` | The single brand hue (interactive elements) and text on it |
-| `--crit`, `--high`, `--med`, `--low`, `--info` | Severity |
-| `--pass`, `--fail`, `--partial`, `--unknown` | Verdicts and statuses |
+| Token | Dark | Light | Purpose |
+|---|---|---|---|
+| `--bg` | `#0B1220` | `#F8FAFC` | Page |
+| `--surface`, `--surface-2`, `--surface-3` | `#0F172A` · `#131D33` · `#1E293B` | `#FFFFFF` · `#F1F5F9` · `#E2E8F0` | Raised areas, wells |
+| `--line`, `--line-strong` | `#1F2A3D` · `#334155` | `#E2E8F0` · `#CBD5E1` | Rules, borders |
+| `--ink`, `--ink-2`, `--muted` | `#F1F5F9` · `#CBD5E1` · `#94A3B8` | `#0B1220` · `#334155` · `#64748B` | Text |
+| `--accent` | `#6E9BFF` | `#2563FF` | Links, focus, interactive text (contrast-safe on the page) |
+| `--accent-bg` / `--accent-ink` | `#2563FF` / `#FFFFFF` | `#2563FF` / `#FFFFFF` | Primary control fill and its text |
+| `--accent-2` | `#00D1FF` | `#0E7490` | Highlight |
+| `--crit`, `--high`, `--med`, `--low`, `--info` | — | — | Severity (separate from brand colours) |
+| `--pass`, `--fail` | — | — | Verdicts and statuses |
 
-Text contrast targets WCAG 2.2 AA (4.5:1 body, 3:1 large text and UI
-graphics) in both themes.
+Text contrast meets WCAG 2.2 AA (4.5:1 body) in both themes; the pairs were
+checked when the palette was introduced.
 
 ## 4. Meaning encodings
 

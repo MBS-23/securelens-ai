@@ -1,7 +1,7 @@
 import { CheckCircle2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { BrandMark3D, type MarkAnimation } from "../../components/BrandMark3D";
-import { Logo } from "../../components/Logo";
+import { Logo, Tagline } from "../../components/Logo";
 import { usePrefs } from "../../lib/prefs";
 
 // Only capabilities that exist today; planned features are not advertised here.
@@ -30,8 +30,8 @@ export function AuthShell({ title, subtitle, children }: { title: string; subtit
       <div className="hidden border-r border-line bg-surface lg:block">
         <div className="flex h-full flex-col justify-between p-12">
           <div>
-            <Logo className="h-10 w-auto" />
-            <div className="mt-2 text-xs tracking-wide text-muted">Scan · Understand · Fix · Verify</div>
+            <Logo className="h-11 w-auto" glow />
+            <Tagline className="mt-2 pl-[3.6rem]" />
           </div>
           <div>
             <BrandMark3D size={176} animation={animation} interactive={!reduceMotion} label={null} className="mb-10" />

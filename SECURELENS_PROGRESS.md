@@ -251,6 +251,18 @@ Added: `SECURELENS_MASTER_SPEC.md`, `SECURELENS_EXECUTION_PROTOCOL.md`, `SECUREL
 Tests now: backend 292 passed (audit run); frontend 28 unit tests and 5 Playwright E2E tests passed
 (setup, account, password change, not-found, logo transition with and without reduced motion).
 
+Final brand identity (product owner's brief, same day): refined Concept 3 mark (tapered S ribbon, cyan → electric
+blue → violet with shading, glowing cyan lens ring), wordmark "SecureLens AI", taglines CODE | ANALYZE | REMEDIATE |
+VERIFY and SEE | UNDERSTAND | FIX | SECURE, palette #00D1FF / #2563FF / #8B5CF6 / #0B1220 / #1E293B / #334155 /
+#FFFFFF / #E2E8F0, typography Inter + Manrope + JetBrains Mono (bundled locally), brand board
+(`brand/board/securelens-brand-board.png`) with live product screenshots and real CLI output; applied to the
+dashboard (palette tokens with contrast-checked accent/accent-bg split, sidebar + top bar kept, account avatar,
+3D mark with controlled glow). Tests: 29 unit + 5 E2E pass.
+
+Known issues added: `npm audit` reports GHSA-82fw-gwwq-j7x9 (moderate) in vitest, a dev-only test runner — runtime
+dependencies have 0 known vulnerabilities; upgrade to vitest 5 with the CI work. The CLI reports version 1.0.0,
+which overstates maturity; set 0.x with the backend stabilisation.
+
 Seen in the live run and still open: finding pages show "A03:2021 Injection" without an edition label —
 fixed by the stashed taxonomy work (§3), which is the next item.
 

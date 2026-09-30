@@ -50,6 +50,11 @@ function Item({ to, icon, children, end }: { to: string; icon: ReactNode; childr
   );
 }
 
+function initials(name: string | null | undefined): string {
+  const parts = (name ?? "").trim().split(/\s+/).filter(Boolean);
+  return (parts.slice(0, 2).map((p) => p[0]).join("") || "?").toUpperCase();
+}
+
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="mt-5">
@@ -88,8 +93,7 @@ export function Layout() {
     <div className="flex h-full">
       <aside className="hidden w-64 shrink-0 flex-col border-r border-line bg-surface lg:flex">
         <NavLink to="/" className="block px-5 pt-5 pb-4" aria-label="SecureLens AI — dashboard">
-          <Logo className="h-7 w-auto" />
-          <div className="mt-1.5 text-[11px] tracking-wide text-muted">Scan · Understand · Fix · Verify</div>
+          <Logo className="h-9 w-auto" glow={theme === "dark"} />
         </NavLink>
         <nav className="flex-1 overflow-y-auto px-3 pb-4 scrollbar-thin">
           <div className="space-y-0.5">
@@ -142,7 +146,7 @@ export function Layout() {
             <div className="flex rounded-lg border border-line p-0.5 text-xs" role="group" aria-label="Explanation mode">
               <button
                 onClick={() => setMode("learning")}
-                className={clsx("flex items-center gap-1 rounded-md px-2.5 py-1", mode === "learning" ? "bg-accent text-accent-ink" : "text-ink-2")}
+                className={clsx("flex items-center gap-1 rounded-md px-2.5 py-1", mode === "learning" ? "bg-accent-bg text-accent-ink" : "text-ink-2")}
                 aria-pressed={mode === "learning"}
                 title="Learning mode: step-by-step explanations and secure coding examples first"
               >
@@ -150,13 +154,21 @@ export function Layout() {
               </button>
               <button
                 onClick={() => setMode("professional")}
-                className={clsx("flex items-center gap-1 rounded-md px-2.5 py-1", mode === "professional" ? "bg-accent text-accent-ink" : "text-ink-2")}
+                className={clsx("flex items-center gap-1 rounded-md px-2.5 py-1", mode === "professional" ? "bg-accent-bg text-accent-ink" : "text-ink-2")}
                 aria-pressed={mode === "professional"}
                 title="Professional mode: evidence and triage first"
               >
                 <Activity className="h-3.5 w-3.5" /> Professional
               </button>
             </div>
+            <NavLink
+              to="/account"
+              className="order-last ml-1 grid h-8 w-8 place-items-center rounded-full border border-line-strong bg-surface-3 font-display text-xs font-bold text-ink"
+              aria-label="Account"
+              title={me?.user?.display_name ?? "Account"}
+            >
+              {initials(me?.user?.display_name)}
+            </NavLink>
             <button className="btn-ghost p-2" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle colour theme">
               {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </button>

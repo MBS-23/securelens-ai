@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { BrandMark3D } from "../src/components/BrandMark3D";
 import { MARK } from "../src/components/brand-paths";
-import { Logo, LogoMark } from "../src/components/Logo";
+import { Logo, LogoMark, Tagline } from "../src/components/Logo";
 
 describe("Logo", () => {
   it("exposes one accessible name for the whole lockup", () => {
@@ -53,5 +53,15 @@ describe("BrandMark3D", () => {
     expect(container.firstElementChild).toHaveClass("sl3d-open");
     rerender(<BrandMark3D label={null} animation="none" />);
     expect(container.firstElementChild).toHaveClass("sl3d-none");
+  });
+});
+
+describe("Tagline", () => {
+  it("renders the primary and secondary taglines as text with decorative separators", () => {
+    const { container, rerender } = render(<Tagline />);
+    expect(container.textContent?.replace(/\s+/g, " ").trim()).toBe("CODE | ANALYZE | REMEDIATE | VERIFY");
+    container.querySelectorAll("[aria-hidden]").forEach((bar) => expect(bar.textContent).toBe("|"));
+    rerender(<Tagline variant="secondary" />);
+    expect(container.textContent?.replace(/\s+/g, " ").trim()).toBe("SEE | UNDERSTAND | FIX | SECURE");
   });
 });

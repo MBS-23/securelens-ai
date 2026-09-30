@@ -6,6 +6,14 @@ import { App } from "./App";
 import { ApiError } from "./lib/api";
 import { AuthProvider } from "./lib/auth";
 import { PrefsProvider } from "./lib/prefs";
+// Fonts are bundled locally (no third-party font CDN): Inter for the interface,
+// Manrope for display type, JetBrains Mono for code.
+import "@fontsource-variable/inter";
+import "@fontsource/manrope/600.css";
+import "@fontsource/manrope/700.css";
+import "@fontsource/manrope/800.css";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/500.css";
 import "./index.css";
 
 const queryClient = new QueryClient({

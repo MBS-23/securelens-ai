@@ -13,15 +13,17 @@ mkdirSync(join(brand, "png"), { recursive: true });
 
 const read = (name) => readFileSync(join(brand, name), "utf8");
 // iOS masks touch icons itself, so that export is full-bleed (no rounded corners).
-const fullBleed = (svg) => svg.replace(/<rect width="64" height="64" rx="14"/, '<rect width="64" height="64"');
+const fullBleed = (svg) => svg.replaceAll(' rx="14"', "");
 
 const jobs = [
-  { svg: read("securelens-app-icon.svg"), size: [32, 32], out: [join(brand, "png", "securelens-app-icon-32.png"), join(pub, "favicon-32.png")] },
+  { svg: read("securelens-favicon.svg"), size: [32, 32], out: [join(brand, "png", "securelens-favicon-32.png"), join(pub, "favicon-32.png")] },
   { svg: fullBleed(read("securelens-app-icon.svg")), size: [180, 180], out: [join(brand, "png", "securelens-app-icon-180.png"), join(pub, "apple-touch-icon.png")] },
   { svg: read("securelens-app-icon.svg"), size: [192, 192], out: [join(pub, "icon-192.png")] },
+  { svg: read("securelens-app-icon.svg"), size: [256, 256], out: [join(brand, "png", "securelens-app-icon-256.png")] },
   { svg: read("securelens-app-icon.svg"), size: [512, 512], out: [join(brand, "png", "securelens-app-icon-512.png"), join(pub, "icon-512.png")] },
-  { svg: read("securelens-logo.svg"), width: 1200, background: "#ffffff", out: [join(brand, "png", "securelens-logo-1200.png")] },
-  { svg: read("securelens-logo-inverse.svg"), width: 1200, background: "#0b1b36", out: [join(brand, "png", "securelens-logo-inverse-1200.png")] },
+  { svg: read("securelens-logo-light.svg"), width: 1200, background: "#ffffff", out: [join(brand, "png", "securelens-logo-light-1200.png")] },
+  { svg: read("securelens-logo-dark.svg"), width: 1200, background: "#0b1220", out: [join(brand, "png", "securelens-logo-dark-1200.png")] },
+  { svg: read("securelens-logo-stacked-dark.svg"), width: 900, background: "#0b1220", out: [join(brand, "png", "securelens-logo-stacked-dark-900.png")] },
 ];
 
 const browser = await chromium.launch();
@@ -44,5 +46,5 @@ try {
 } finally {
   await browser.close();
 }
-copyFileSync(join(brand, "securelens-app-icon.svg"), join(pub, "favicon.svg"));
+copyFileSync(join(brand, "securelens-favicon.svg"), join(pub, "favicon.svg"));
 console.log("exported", jobs.length, "rasters and favicon.svg");

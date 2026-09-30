@@ -250,7 +250,7 @@ function TriageModal({ detail, open, onClose }: { detail: Detail; open: boolean;
         {triage && (
           <div className="flex rounded-lg border border-line p-0.5 text-sm">
             {(["status", "verification"] as const).map((k) => (
-              <button key={k} onClick={() => setKind(k)} className={clsx("flex-1 rounded-md px-3 py-1.5", kind === k ? "bg-accent text-accent-ink" : "text-ink-2")}>
+              <button key={k} onClick={() => setKind(k)} className={clsx("flex-1 rounded-md px-3 py-1.5", kind === k ? "bg-accent-bg text-accent-ink" : "text-ink-2")}>
                 {k === "status" ? "Lifecycle status" : "Verification"}
               </button>
             ))}
