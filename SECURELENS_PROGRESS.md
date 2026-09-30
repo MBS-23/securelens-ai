@@ -2,7 +2,7 @@
 
 Last updated: 2026-09-30 (after the brand and transition work) · Branch: `claude/keen-brahmagupta-n4am7q` · Audit baseline: `afc5425`
 
-**Start every session here.** Read, in order: `SECURELENS_MASTER_SPEC.md` (what to build, verbatim),
+**Start every session here** (cloud or local — for local setup see `LOCAL_DEVELOPMENT.md`). Read, in order: `SECURELENS_MASTER_SPEC.md` (what to build, verbatim),
 `SECURELENS_EXECUTION_PROTOCOL.md` (how to work), this file (where things stand), `README.md`,
 then `docs/ARCHITECTURE.md` and `docs/THREAT_MODEL.md` for the subsystem you are touching.
 
@@ -179,11 +179,12 @@ that loop.
 
 ## 3. In-progress work (not committed)
 
-Stashed as `stash@{0}` "wip-taxonomy-registry" (backend only) before the audit:
+Saved as `wip/taxonomy-evidence-wip.patch` (applies cleanly to the branch; `git apply` it — see
+`LOCAL_DEVELOPMENT.md` §5). It was first stashed in the cloud container before the audit and contains:
 `securelens/taxonomy/` (registry.yml with all 20 official OWASP Top 10 CWE lists for 2025 and 2021,
 API 2023, LLM 2026 + 2025 lineage, verified CWE parents), `findings/annotate.py` (evidence classes,
 limitations, taxonomy per finding), enum changes (EvidenceClass, LEARNER, INCONCLUSIVE), catalog
-rewrite, precise rule-level CWEs. Resume with `git stash pop`, then finish: retest INCONCLUSIVE,
+rewrite, precise rule-level CWEs. After applying the patch, finish: retest INCONCLUSIVE,
 reports/CLI/SARIF output, DB columns + migration, tests.
 
 ## 4. Current database schema (28 tables, Alembic 0001)

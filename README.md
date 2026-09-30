@@ -20,6 +20,7 @@ it never claims that code is completely secure.
 | `SECURELENS_MASTER_SPEC.md` | The product specification, verbatim — what SecureLens must become |
 | `SECURELENS_EXECUTION_PROTOCOL.md` | How the work is carried out (audit first, vertical slices, no fake features) |
 | `SECURELENS_PROGRESS.md` | Current state, decisions, API contracts, schema, known issues, next phase |
+| `LOCAL_DEVELOPMENT.md` | Continuing development on your own computer (setup, tests, resuming unfinished work) |
 | `docs/ARCHITECTURE.md` · `docs/THREAT_MODEL.md` | Components, trust boundaries, threats and mitigations |
 | `docs/PRODUCT_SPEC.md` · `docs/DESIGN_SYSTEM.md` · `docs/RESEARCH.md` | Condensed spec, UI rules, verified taxonomy sources |
 

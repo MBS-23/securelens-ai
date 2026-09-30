@@ -1,0 +1,1730 @@
+diff --git a/securelens-ai/backend/securelens/core/permissions.py b/securelens-ai/backend/securelens/core/permissions.py
+index 3ded547..9e5a2e3 100644
+--- a/securelens-ai/backend/securelens/core/permissions.py
++++ b/securelens-ai/backend/securelens/core/permissions.py
+@@ -1,9 +1,10 @@
+ """Role-based access control.
+ 
+ Roles are granted per organization (``Membership``). OWNER, ADMIN and
+-SECURITY_ANALYST see every project in their organization; DEVELOPER and VIEWER
+-see only projects they are explicitly added to (``ProjectMember``). Nobody
+-ever sees another organization's data.
++SECURITY_ANALYST see every project in their organization; DEVELOPER, VIEWER and
++LEARNER see only projects they are explicitly added to (``ProjectMember``).
++Every role can learn and practise. Nobody ever sees another organization's
++data.
+ """
+ 
+ from __future__ import annotations
+@@ -41,13 +42,21 @@ class Permission(StrEnum):
+     MEMBER_READ = "member:read"
+     MEMBER_MANAGE = "member:manage"
+     APIKEY_MANAGE = "apikey:manage"
++    LEARN_READ = "learn:read"
++    PRACTICE_SUBMIT = "practice:submit"
++    PROGRESS_READ_ALL = "progress:read_all"
++    CONTENT_MANAGE = "content:manage"
+ 
+ 
+-_VIEWER = {
++_LEARNER = {
++    Permission.LEARN_READ,
++    Permission.PRACTICE_SUBMIT,
+     Permission.PROJECT_READ,
+     Permission.SCAN_READ,
+     Permission.FINDING_READ,
+     Permission.REPORT_READ,
++}
++_VIEWER = _LEARNER | {
+     Permission.AISEC_READ,
+ }
+ _DEVELOPER = _VIEWER | {
+@@ -77,9 +86,12 @@ _ADMIN = _ANALYST | {
+     Permission.AUDIT_READ,
+     Permission.MEMBER_MANAGE,
+     Permission.APIKEY_MANAGE,
++    Permission.PROGRESS_READ_ALL,
++    Permission.CONTENT_MANAGE,
+ }
+ 
+ ROLE_PERMISSIONS: dict[Role, frozenset[Permission]] = {
++    Role.LEARNER: frozenset(_LEARNER),
+     Role.VIEWER: frozenset(_VIEWER),
+     Role.DEVELOPER: frozenset(_DEVELOPER),
+     Role.SECURITY_ANALYST: frozenset(_ANALYST),
+diff --git a/securelens-ai/backend/securelens/enums.py b/securelens-ai/backend/securelens/enums.py
+index 127a3fd..5652ca4 100644
+--- a/securelens-ai/backend/securelens/enums.py
++++ b/securelens-ai/backend/securelens/enums.py
+@@ -15,14 +15,16 @@ class Role(StrEnum):
+     SECURITY_ANALYST = "SECURITY_ANALYST"
+     DEVELOPER = "DEVELOPER"
+     VIEWER = "VIEWER"
++    LEARNER = "LEARNER"  # learning and practice; read access only to projects they are added to
+ 
+ 
+ ROLE_RANK = {
+-    Role.VIEWER: 0,
+-    Role.DEVELOPER: 1,
+-    Role.SECURITY_ANALYST: 2,
+-    Role.ADMIN: 3,
+-    Role.OWNER: 4,
++    Role.LEARNER: 0,
++    Role.VIEWER: 1,
++    Role.DEVELOPER: 2,
++    Role.SECURITY_ANALYST: 3,
++    Role.ADMIN: 4,
++    Role.OWNER: 5,
+ }
+ 
+ 
+@@ -81,6 +83,35 @@ class Verification(StrEnum):
+     NOT_TESTED = "NOT_TESTED"
+ 
+ 
++class EvidenceClass(StrEnum):
++    """How the evidence behind a finding was obtained (see docs/PRODUCT_SPEC.md §7).
++
++    Static data flow is not observed exploitation: a STATIC_ANALYSIS_FINDING
++    never becomes DYNAMIC_TEST_RESULT or DETERMINISTICALLY_VERIFIED without a
++    test that actually ran.
++    """
++
++    DETERMINISTICALLY_VERIFIED = "DETERMINISTICALLY_VERIFIED"  # a reproducible test with an unambiguous result
++    DYNAMIC_TEST_RESULT = "DYNAMIC_TEST_RESULT"  # a controlled test produced observable behaviour
++    STATIC_ANALYSIS_FINDING = "STATIC_ANALYSIS_FINDING"  # pattern or data flow found in source code
++    USER_REPORTED = "USER_REPORTED"  # supplied by a person
++    AI_ASSISTED_ANALYSIS = "AI_ASSISTED_ANALYSIS"  # an AI model interpreted evidence; never auto-confirmed
++    INCONCLUSIVE = "INCONCLUSIVE"  # insufficient evidence either way
++    FALSE_POSITIVE = "FALSE_POSITIVE"  # reviewed and determined not to be the claimed issue
++
++
++# Strongest first. FALSE_POSITIVE is a review outcome, applied over the others.
++EVIDENCE_CLASS_STRENGTH = {
++    EvidenceClass.DETERMINISTICALLY_VERIFIED: 5,
++    EvidenceClass.DYNAMIC_TEST_RESULT: 4,
++    EvidenceClass.STATIC_ANALYSIS_FINDING: 3,
++    EvidenceClass.USER_REPORTED: 2,
++    EvidenceClass.AI_ASSISTED_ANALYSIS: 1,
++    EvidenceClass.INCONCLUSIVE: 0,
++    EvidenceClass.FALSE_POSITIVE: -1,
++}
++
++
+ class FindingStatus(StrEnum):
+     OPEN = "OPEN"
+     IN_PROGRESS = "IN_PROGRESS"
+@@ -88,9 +119,11 @@ class FindingStatus(StrEnum):
+     REOPENED = "REOPENED"
+     FALSE_POSITIVE = "FALSE_POSITIVE"
+     ACCEPTED_RISK = "ACCEPTED_RISK"
++    INCONCLUSIVE = "INCONCLUSIVE"  # reviewed, but the evidence does not settle it; still counts as active
+ 
+ 
+-ACTIVE_STATUSES = frozenset({FindingStatus.OPEN, FindingStatus.IN_PROGRESS, FindingStatus.REOPENED})
++ACTIVE_STATUSES = frozenset({FindingStatus.OPEN, FindingStatus.IN_PROGRESS, FindingStatus.REOPENED,
++                             FindingStatus.INCONCLUSIVE})
+ 
+ 
+ class Exploitability(StrEnum):
+@@ -161,6 +194,7 @@ class RetestResultKind(StrEnum):
+     REGRESSION = "REGRESSION"
+     NOT_REPRODUCED = "NOT_REPRODUCED"
+     NOT_TESTED = "NOT_TESTED"
++    INCONCLUSIVE = "INCONCLUSIVE"  # the file was present but could not be (fully) analysed again
+     NEW = "NEW"
+ 
+ 
+diff --git a/securelens-ai/backend/securelens/findings/annotate.py b/securelens-ai/backend/securelens/findings/annotate.py
+new file mode 100644
+index 0000000..bf7a33b
+--- /dev/null
++++ b/securelens-ai/backend/securelens/findings/annotate.py
+@@ -0,0 +1,124 @@
++"""Finding annotation: evidence classes, limitations, taxonomy and provenance.
++
++Runs in ``finalize()`` for every finding, whatever produced it, and again on
++the server for imported CLI results, so these fields are always computed by
++SecureLens itself and never trusted from a client.
++"""
++
++from __future__ import annotations
++
++from securelens import taxonomy
++from securelens.enums import EVIDENCE_CLASS_STRENGTH, EvidenceClass, Exploitability, SourceKind, Verification
++from securelens.findings import catalog
++from securelens.findings.model import Evidence, Finding
++
++KIND_CLASS: dict[str, EvidenceClass | None] = {
++    "dataflow": EvidenceClass.STATIC_ANALYSIS_FINDING,
++    "pattern": EvidenceClass.STATIC_ANALYSIS_FINDING,
++    "code": EvidenceClass.STATIC_ANALYSIS_FINDING,
++    "secret": EvidenceClass.STATIC_ANALYSIS_FINDING,
++    "dependency": EvidenceClass.STATIC_ANALYSIS_FINDING,
++    "scanner_output": EvidenceClass.STATIC_ANALYSIS_FINDING,
++    "test_input": EvidenceClass.DYNAMIC_TEST_RESULT,
++    "model_response": EvidenceClass.DYNAMIC_TEST_RESULT,
++    "tool_call": EvidenceClass.DYNAMIC_TEST_RESULT,
++    "retrieval": EvidenceClass.DYNAMIC_TEST_RESULT,
++    "criterion": EvidenceClass.DYNAMIC_TEST_RESULT,
++    "test_result": EvidenceClass.DETERMINISTICALLY_VERIFIED,
++    "ai_analysis": EvidenceClass.AI_ASSISTED_ANALYSIS,
++    "manual": EvidenceClass.USER_REPORTED,
++    "correlation": None,
++}
++
++# Evidence kinds a CLI scan can produce. Imported results containing any other
++# kind are refused: a test result or an AI verdict must come from the server
++# component that produced it, never from uploaded data.
++STATIC_EVIDENCE_KINDS = frozenset({"dataflow", "pattern", "code", "secret", "dependency", "scanner_output",
++                                   "correlation"})
++
++EVIDENCE_CLASS_LABELS = {
++    EvidenceClass.DETERMINISTICALLY_VERIFIED: "Deterministically verified",
++    EvidenceClass.DYNAMIC_TEST_RESULT: "Dynamic test result",
++    EvidenceClass.STATIC_ANALYSIS_FINDING: "Static analysis finding",
++    EvidenceClass.USER_REPORTED: "User reported",
++    EvidenceClass.AI_ASSISTED_ANALYSIS: "AI-assisted analysis",
++    EvidenceClass.INCONCLUSIVE: "Inconclusive",
++    EvidenceClass.FALSE_POSITIVE: "False positive",
++}
++
++
++def evidence_class_for(evidence: Evidence, source_kind: SourceKind) -> EvidenceClass | None:
++    derived = KIND_CLASS.get(evidence.kind)
++    if derived is EvidenceClass.STATIC_ANALYSIS_FINDING and source_kind == SourceKind.LLM_TEST:
++        return EvidenceClass.DYNAMIC_TEST_RESULT
++    return derived
++
++
++def strongest(classes: list[EvidenceClass]) -> EvidenceClass | None:
++    return max(classes, key=lambda c: EVIDENCE_CLASS_STRENGTH[c]) if classes else None
++
++
++def finding_evidence_class(finding: Finding) -> EvidenceClass:
++    if finding.verification == Verification.FALSE_POSITIVE:
++        return EvidenceClass.FALSE_POSITIVE
++    classes = [e.evidence_class for e in finding.evidence if e.evidence_class is not None]
++    best = strongest(classes)
++    if best is not None:
++        return best
++    if finding.source_kind == SourceKind.LLM_TEST:
++        return EvidenceClass.DYNAMIC_TEST_RESULT
++    return EvidenceClass.STATIC_ANALYSIS_FINDING
++
++
++def limitations_for(finding: Finding) -> list[str]:
++    """What this finding's evidence does not show — printed next to the evidence."""
++    out: list[str] = []
++    kind = finding.source_kind
++    external_only = bool(finding.scanners) and not any(s.startswith("securelens") for s in finding.scanners)
++    if kind in (SourceKind.SAST, SourceKind.AI_CODE):
++        out.append("Static analysis only: the code was not executed and exploitation was not attempted.")
++        if finding.exploitability == Exploitability.PROVEN_DATAFLOW:
++            out.append("The data-flow path was traced in source code; runtime conditions such as framework "
++                       "filters, middleware or deployment configuration were not observed.")
++        elif any(e.data.get("origin") == "unknown" for e in finding.evidence if e.kind == "dataflow"):
++            out.append("The origin of the value could not be traced; it may not be attacker-controlled.")
++        elif finding.exploitability == Exploitability.THEORETICAL:
++            out.append("Pattern match: no data flow from untrusted input was established.")
++    elif kind == SourceKind.SECRET:
++        out.append("The value matched a secret pattern. Whether it is a live credential was not checked; "
++                   "SecureLens never sends detected secrets to third parties.")
++    elif kind == SourceKind.DEPENDENCY:
++        out.append("Matched by package version against a published advisory. Whether the vulnerable code is "
++                   "reachable from this application was not analysed.")
++    elif kind == SourceKind.LLM_TEST:
++        out.append("Observed against the configured target at test time; model behaviour can vary between runs "
++                   "and with configuration changes.")
++    if external_only:
++        out.append(f"Reported by {', '.join(finding.scanners)}; SecureLens did not independently confirm it.")
++    if finding.evidence_class == EvidenceClass.AI_ASSISTED_ANALYSIS:
++        out.append("Supported only by AI-assisted analysis; manual verification is required.")
++    return out
++
++
++def _classes_for(finding: Finding) -> list[catalog.VulnClass]:
++    classes: list[catalog.VulnClass] = []
++    for key in (finding.vuln_class, finding.correlation.get("base_class")):
++        if key and catalog.known(str(key)) and all(c.key != key for c in classes):
++            classes.append(catalog.get(str(key)))
++    return classes
++
++
++def annotate(finding: Finding, *, tool_version: str | None = None, language: str | None = None) -> Finding:
++    for evidence in finding.evidence:
++        # Always derived from what the evidence is, never taken from a label it carries.
++        evidence.evidence_class = evidence_class_for(evidence, finding.source_kind)
++    finding.evidence_class = finding_evidence_class(finding)
++    refs = taxonomy.map_finding(_classes_for(finding), finding.cwe)
++    finding.taxonomy = [r.to_dict() for r in refs]
++    finding.owasp = taxonomy.current_labels(refs)
++    if language and not finding.language:
++        finding.language = language
++    if tool_version:
++        finding.tool_version = tool_version
++    finding.limitations = limitations_for(finding)
++    return finding
+diff --git a/securelens-ai/backend/securelens/findings/catalog.py b/securelens-ai/backend/securelens/findings/catalog.py
+index c76449c..2902fbd 100644
+--- a/securelens-ai/backend/securelens/findings/catalog.py
++++ b/securelens-ai/backend/securelens/findings/catalog.py
+@@ -2,12 +2,15 @@
+ 
+ from __future__ import annotations
+ 
++from collections.abc import Mapping
+ from dataclasses import dataclass, field
+ from functools import lru_cache
+ from importlib import resources
++from typing import Any
+ 
+ import yaml
+ 
++from securelens import taxonomy
+ from securelens.enums import Engine, Severity
+ 
+ 
+@@ -17,7 +20,6 @@ class VulnClass:
+     name: str
+     engine: Engine
+     cwe: tuple[str, ...]
+-    owasp: tuple[str, ...]
+     severity: Severity
+     description: str
+     impact: str
+@@ -25,11 +27,22 @@ class VulnClass:
+     remediation: str
+     examples: dict[str, dict[str, str]] = field(default_factory=dict)
+     references: tuple[str, ...] = ()
++    top10_parent_cwe: str | None = None
++    curated: Mapping[str, Mapping[str, tuple[Any, ...]]] = field(default_factory=dict)
+ 
+     @property
+     def category(self) -> str:
+         return "AI Security" if self.engine == Engine.AISEC else "Application Security"
+ 
++    def taxonomy(self) -> list[taxonomy.TaxonomyRef]:
++        """Class-level mappings (conditional entries included) for lessons and catalog pages."""
++        return taxonomy.map_class(self)
++
++    @property
++    def owasp(self) -> tuple[str, ...]:
++        """Current-edition labels, e.g. ``A05:2025 Injection``."""
++        return tuple(taxonomy.current_labels(self.taxonomy()))
++
+     def secure_pattern(self, language: str | None) -> str:
+         lang = {"typescript": "javascript", "tsx": "javascript"}.get(language or "", language or "")
+         example = self.examples.get(lang) or next(iter(self.examples.values()), None)
+@@ -49,7 +62,6 @@ def catalog() -> dict[str, VulnClass]:
+             name=entry["name"],
+             engine=Engine(entry.get("engine", "APPSEC")),
+             cwe=tuple(entry.get("cwe", [])),
+-            owasp=tuple(entry.get("owasp", [])),
+             severity=Severity(entry.get("severity", "MEDIUM")),
+             description=" ".join(entry.get("description", "").split()),
+             impact=" ".join(entry.get("impact", "").split()),
+@@ -57,10 +69,31 @@ def catalog() -> dict[str, VulnClass]:
+             remediation=entry.get("remediation", ""),
+             examples=entry.get("examples", {}) or {},
+             references=tuple(entry.get("references", [])),
++            top10_parent_cwe=(entry.get("taxonomy") or {}).get("top10_parent_cwe"),
++            curated=_curated(key, entry.get("taxonomy") or {}),
+         )
+     return out
+ 
+ 
++def _curated(key: str, raw: dict) -> dict[str, dict[str, tuple[Any, ...]]]:
++    out: dict[str, dict[str, tuple[Any, ...]]] = {}
++    for framework, editions in raw.items():
++        if framework == "top10_parent_cwe":
++            continue
++        if not isinstance(editions, dict):
++            raise ValueError(f"catalog {key}: taxonomy.{framework} must map editions to category lists")
++        out[framework] = {str(edition): tuple(entries or ()) for edition, entries in editions.items()}
++    return out
++
++
++def validate() -> list[str]:
++    """Every problem with catalog taxonomy mappings; used by tests and ``securelens-manage check``."""
++    problems: list[str] = []
++    for vc in catalog().values():
++        problems.extend(taxonomy.validate_class(vc))
++    return problems
++
++
+ def get(key: str) -> VulnClass:
+     entries = catalog()
+     if key not in entries:
+diff --git a/securelens-ai/backend/securelens/findings/catalog.yml b/securelens-ai/backend/securelens/findings/catalog.yml
+index f8150f4..2f3c3b8 100644
+--- a/securelens-ai/backend/securelens/findings/catalog.yml
++++ b/securelens-ai/backend/securelens/findings/catalog.yml
+@@ -1,17 +1,25 @@
+ # SecureLens vulnerability catalog.
+ #
+ # One entry per vulnerability class. Scanner rules reference a class; the
+-# catalog supplies the stable, human-reviewed explanation: CWE and OWASP
+-# mapping, impact, recommendation and a secure coding pattern. These texts are
+-# shown as "Rule guidance" and are used to ground AI analysis — they are not
+-# AI-generated.
++# catalog supplies the stable, human-reviewed explanation: CWE, impact,
++# recommendation and a secure coding pattern. These texts are shown as "Rule
++# guidance" and are used to ground AI analysis — they are not AI-generated.
++#
++# Taxonomy mappings (see securelens/taxonomy/registry.yml):
++# * OWASP Top 10 categories are derived from each finding's CWEs using the
++#   official per-category CWE lists, for the current and historical editions.
++# * `taxonomy.top10_parent_cwe` opts in to a verified CWE parent when the
++#   class's own CWE is not listed.
++# * `taxonomy.owasp_api` / `taxonomy.owasp_llm` are reviewed class-level
++#   mappings (those lists publish no CWE mappings). An entry may apply only to
++#   findings with given CWEs (`when_cwe`). LLM mappings name the current
++#   edition; historical identifiers follow the edition's published lineage.
+ 
+ # =========================================================== Application
+ sql_injection:
+   name: SQL Injection
+   engine: APPSEC
+   cwe: [CWE-89]
+-  owasp: ["A03:2021 Injection"]
+   severity: CRITICAL
+   description: >-
+     The application builds a SQL statement by combining query text with data. If that data comes from a
+@@ -42,7 +50,8 @@ nosql_injection:
+   name: NoSQL Injection
+   engine: APPSEC
+   cwe: [CWE-943]
+-  owasp: ["A03:2021 Injection"]
++  taxonomy:
++    top10_parent_cwe: CWE-74  # CWE-943 is a child of CWE-74 (Injection)
+   severity: HIGH
+   description: >-
+     Request data is used directly inside a NoSQL query. JSON request bodies can carry objects such as
+@@ -63,7 +72,6 @@ xss:
+   name: Cross-Site Scripting (XSS)
+   engine: APPSEC
+   cwe: [CWE-79]
+-  owasp: ["A03:2021 Injection"]
+   severity: HIGH
+   description: >-
+     Untrusted data is placed into an HTML page or DOM sink without context-appropriate encoding, so a browser
+@@ -94,7 +102,6 @@ command_injection:
+   name: OS Command Injection
+   engine: APPSEC
+   cwe: [CWE-78]
+-  owasp: ["A03:2021 Injection"]
+   severity: CRITICAL
+   description: >-
+     A shell command string is assembled with untrusted data. Shell metacharacters such as ; | && $() allow
+@@ -123,7 +130,6 @@ code_injection:
+   name: Code Injection
+   engine: APPSEC
+   cwe: [CWE-94, CWE-95]
+-  owasp: ["A03:2021 Injection"]
+   severity: CRITICAL
+   description: Data is evaluated as program code (eval, exec, new Function, assert with strings).
+   impact: Arbitrary code execution inside the application process.
+@@ -145,7 +151,8 @@ template_injection:
+   name: Server-Side Template Injection
+   engine: APPSEC
+   cwe: [CWE-1336]
+-  owasp: ["A03:2021 Injection"]
++  taxonomy:
++    top10_parent_cwe: CWE-94  # CWE-1336 is a child of CWE-94 (Code Injection)
+   severity: HIGH
+   description: User-controlled data is compiled as a template instead of being passed as template data.
+   impact: Template engines expose object graphs; SSTI commonly leads to remote code execution.
+@@ -162,7 +169,6 @@ path_traversal:
+   name: Path Traversal
+   engine: APPSEC
+   cwe: [CWE-22]
+-  owasp: ["A01:2021 Broken Access Control"]
+   severity: HIGH
+   description: >-
+     A filesystem path is derived from untrusted input. Sequences such as ../ or absolute paths let the caller
+@@ -189,7 +195,6 @@ file_inclusion:
+   name: File Inclusion (LFI/RFI)
+   engine: APPSEC
+   cwe: [CWE-98]
+-  owasp: ["A03:2021 Injection"]
+   severity: CRITICAL
+   description: include/require receives a path influenced by the request, so the interpreter may load and execute an attacker-chosen file.
+   impact: Execution of arbitrary PHP code, disclosure of local files.
+@@ -206,7 +211,8 @@ ssrf:
+   name: Server-Side Request Forgery (SSRF)
+   engine: APPSEC
+   cwe: [CWE-918]
+-  owasp: ["A10:2021 Server-Side Request Forgery"]
++  taxonomy:
++    owasp_api: {"2023": [API7]}
+   severity: HIGH
+   description: The server makes an outbound request to a destination the caller controls.
+   impact: >-
+@@ -228,7 +234,6 @@ open_redirect:
+   name: Open Redirect
+   engine: APPSEC
+   cwe: [CWE-601]
+-  owasp: ["A01:2021 Broken Access Control"]
+   severity: MEDIUM
+   description: The redirect destination comes from request data without validation.
+   impact: Phishing through a trusted domain, and token leakage in OAuth-style flows.
+@@ -245,7 +250,6 @@ hardcoded_secret:
+   name: Hardcoded Secret
+   engine: APPSEC
+   cwe: [CWE-798]
+-  owasp: ["A07:2021 Identification and Authentication Failures"]
+   severity: HIGH
+   description: A credential, key or token is embedded in source code or configuration committed to the repository.
+   impact: >-
+@@ -270,7 +274,10 @@ weak_cryptography:
+   name: Weak Cryptography
+   engine: APPSEC
+   cwe: [CWE-327, CWE-328]
+-  owasp: ["A02:2021 Cryptographic Failures"]
++  taxonomy:
++    owasp_api:
++      "2023":
++        - {id: API2, when_cwe: [CWE-916]}  # weakly hashed passwords
+   severity: MEDIUM
+   description: A broken or weak algorithm or mode is used (MD5, SHA-1, DES, RC4, ECB mode, deprecated APIs).
+   impact: >-
+@@ -298,7 +305,6 @@ weak_randomness:
+   name: Insecure Randomness
+   engine: APPSEC
+   cwe: [CWE-338]
+-  owasp: ["A02:2021 Cryptographic Failures"]
+   severity: MEDIUM
+   description: A non-cryptographic pseudo-random generator produces a security-sensitive value such as a token or reset code.
+   impact: Attackers can predict or brute-force the value and hijack sessions or password resets.
+@@ -318,7 +324,6 @@ insecure_tls:
+   name: Insecure TLS / Certificate Validation
+   engine: APPSEC
+   cwe: [CWE-295]
+-  owasp: ["A02:2021 Cryptographic Failures"]
+   severity: HIGH
+   description: Certificate or host-key verification is disabled, or an obsolete protocol version is allowed.
+   impact: A network attacker can impersonate the remote service and read or modify traffic, including credentials.
+@@ -331,7 +336,11 @@ insecure_authentication:
+   name: Insecure Authentication
+   engine: APPSEC
+   cwe: [CWE-287]
+-  owasp: ["A07:2021 Identification and Authentication Failures"]
++  taxonomy:
++    owasp_api:
++      "2023":
++        # API2 lists unsigned JWTs, unchecked expiry, plain-text passwords, brute force
++        - {id: API2, when_cwe: [CWE-287, CWE-307, CWE-347, CWE-613, CWE-256]}
+   severity: HIGH
+   description: >-
+     Authentication or session handling is implemented unsafely: signatures not verified, hardcoded credentials,
+@@ -350,7 +359,6 @@ missing_csrf_protection:
+   name: Missing CSRF Protection
+   engine: APPSEC
+   cwe: [CWE-352]
+-  owasp: ["A01:2021 Broken Access Control"]
+   severity: MEDIUM
+   description: CSRF protection is explicitly disabled for a state-changing endpoint.
+   impact: Another site can make a signed-in victim's browser perform actions on their behalf.
+@@ -364,7 +372,11 @@ broken_authorization:
+   name: Broken Authorization (IDOR)
+   engine: APPSEC
+   cwe: [CWE-639, CWE-862]
+-  owasp: ["A01:2021 Broken Access Control"]
++  taxonomy:
++    owasp_api:
++      "2023":
++        - {id: API1, when_cwe: [CWE-639, CWE-566]}  # object-level (IDOR)
++        - {id: API5, when_cwe: [CWE-285, CWE-862]}  # function-level
+   severity: MEDIUM
+   description: >-
+     A record is loaded using an identifier supplied by the client, and the surrounding code does not check
+@@ -386,7 +398,6 @@ unsafe_file_handling:
+   name: Unsafe File Handling
+   engine: APPSEC
+   cwe: [CWE-434, CWE-377, CWE-732]
+-  owasp: ["A01:2021 Broken Access Control"]
+   severity: HIGH
+   description: >-
+     Files are handled unsafely: uploads saved under client-controlled names, archives extracted without path
+@@ -405,7 +416,6 @@ insecure_deserialization:
+   name: Insecure Deserialization
+   engine: APPSEC
+   cwe: [CWE-502]
+-  owasp: ["A08:2021 Software and Data Integrity Failures"]
+   severity: HIGH
+   description: Data is deserialized with a format that can instantiate arbitrary objects (pickle, unsafe YAML, PHP unserialize, node-serialize, full torch.load).
+   impact: Remote code execution or object injection when the input is attacker-controlled.
+@@ -426,7 +436,6 @@ xxe:
+   name: XML External Entity (XXE)
+   engine: APPSEC
+   cwe: [CWE-611]
+-  owasp: ["A05:2021 Security Misconfiguration"]
+   severity: HIGH
+   description: An XML parser resolves external entities while parsing untrusted documents.
+   impact: Local file disclosure, SSRF and denial of service.
+@@ -439,7 +448,10 @@ dangerous_api:
+   name: Dangerous API Usage
+   engine: APPSEC
+   cwe: [CWE-676]
+-  owasp: ["A05:2021 Security Misconfiguration"]
++  taxonomy:
++    owasp_api:
++      "2023":
++        - {id: API8, when_cwe: [CWE-942, CWE-209]}  # CORS policy, stack traces in errors
+   severity: MEDIUM
+   description: An API or configuration that is unsafe in production is used (debug servers, permissive CORS, extract(), eval of non-constant strings).
+   impact: Depends on the API — ranges from information disclosure to remote code execution.
+@@ -452,7 +464,8 @@ prototype_pollution:
+   name: Prototype Pollution
+   engine: APPSEC
+   cwe: [CWE-1321]
+-  owasp: ["A08:2021 Software and Data Integrity Failures"]
++  taxonomy:
++    top10_parent_cwe: CWE-915  # CWE-1321 is a child of CWE-915 (object attribute modification)
+   severity: MEDIUM
+   description: Untrusted objects are deep-merged or assigned by path, allowing __proto__ or constructor.prototype keys to modify shared prototypes.
+   impact: Property injection across the application, which can lead to authorization bypass or code execution.
+@@ -466,7 +479,8 @@ redos:
+   name: Regular Expression Denial of Service
+   engine: APPSEC
+   cwe: [CWE-1333]
+-  owasp: ["A05:2021 Security Misconfiguration"]
++  taxonomy:
++    owasp_api: {"2023": [API4]}  # CPU exhaustion; no Top 10 list includes CWE-1333
+   severity: MEDIUM
+   description: A regular expression is constructed from untrusted input.
+   impact: Catastrophic backtracking can block the event loop or worker, denying service.
+@@ -479,7 +493,6 @@ sensitive_data_exposure:
+   name: Sensitive Data Exposure
+   engine: APPSEC
+   cwe: [CWE-200]
+-  owasp: ["A01:2021 Broken Access Control"]
+   severity: HIGH
+   description: Configuration exposes sensitive data to parties who should not see it (for example provider API keys in browser bundles).
+   impact: Credential theft and unauthorized use of paid or privileged services.
+@@ -492,7 +505,10 @@ vulnerable_dependency:
+   name: Vulnerable Dependency
+   engine: APPSEC
+   cwe: [CWE-1395]
+-  owasp: ["A06:2021 Vulnerable and Outdated Components"]
++  taxonomy:
++    # CWE-1395 is not in the 2021 lists; A06:2021 is that edition's category for
++    # components with known vulnerabilities.
++    owasp_top10: {"2021": [A06]}
+   severity: HIGH
+   description: A third-party package version is affected by a published security advisory.
+   impact: Depends on the advisory; exploitation requires the vulnerable code path to be reachable.
+@@ -506,7 +522,8 @@ prompt_injection:
+   name: Prompt Injection Risk (untrusted input in instructions)
+   engine: AISEC
+   cwe: [CWE-1427]
+-  owasp: ["LLM01:2025 Prompt Injection"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM01]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: >-
+     Untrusted input is concatenated into the system or developer instructions of an LLM call. The model cannot
+@@ -531,7 +548,8 @@ rag_prompt_injection:
+   name: Indirect Prompt Injection Risk (retrieved content in instructions)
+   engine: AISEC
+   cwe: [CWE-1427]
+-  owasp: ["LLM01:2025 Prompt Injection", "LLM08:2025 Vector and Embedding Weaknesses"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM01, LLM09]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: Retrieved documents are inserted into the system instructions, so instructions hidden in a document are treated as trusted.
+   impact: A poisoned document can hijack answers, leak data or trigger tool calls for every user who retrieves it.
+@@ -545,7 +563,8 @@ llm_output_handling:
+   name: Improper LLM Output Handling
+   engine: AISEC
+   cwe: [CWE-1426]
+-  owasp: ["LLM05:2025 Improper Output Handling"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM10]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: >-
+     Text generated by a model reaches a dangerous sink (HTML, SQL, shell, eval, file paths, HTTP requests)
+@@ -561,7 +580,8 @@ unsafe_tool_input:
+   name: Unsafe Tool Input Handling
+   engine: AISEC
+   cwe: [CWE-1426, CWE-20]
+-  owasp: ["LLM06:2025 Excessive Agency", "LLM05:2025 Improper Output Handling"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM03, LLM10]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: >-
+     An argument the model chooses for a tool (LangChain/agents tool, MCP tool, function calling) reaches a
+@@ -579,7 +599,8 @@ excessive_agency:
+   name: Excessive Agency
+   engine: AISEC
+   cwe: [CWE-250, CWE-863]
+-  owasp: ["LLM06:2025 Excessive Agency"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM03]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: An agent is given capabilities broader than its task requires (arbitrary code or shell execution, unrestricted requests).
+   impact: Any successful prompt injection inherits these capabilities.
+@@ -593,7 +614,8 @@ ai_supply_chain:
+   name: AI Supply Chain Risk
+   engine: AISEC
+   cwe: [CWE-494]
+-  owasp: ["LLM03:2025 Supply Chain"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM04]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: Model loading executes code from the model repository (trust_remote_code) or deserializes pickled weights.
+   impact: A malicious or compromised model repository runs code on the host.
+@@ -608,7 +630,8 @@ prompt_injection_direct:
+   name: Direct Prompt Injection
+   engine: AISEC
+   cwe: [CWE-1427]
+-  owasp: ["LLM01:2025 Prompt Injection"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM01]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: The application followed instructions supplied in the user's message that conflict with its configured behaviour.
+   impact: Users can make the application ignore its policy, disclose protected data or misuse tools.
+@@ -621,7 +644,8 @@ prompt_injection_indirect:
+   name: Indirect Prompt Injection
+   engine: AISEC
+   cwe: [CWE-1427]
+-  owasp: ["LLM01:2025 Prompt Injection"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM01]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: The application followed instructions embedded in content it processed (documents, web pages, tool results), not from its user.
+   impact: Third parties who can place content in the data path can control the application for every user.
+@@ -634,7 +658,8 @@ instruction_conflict:
+   name: Instruction Hierarchy Failure
+   engine: AISEC
+   cwe: [CWE-1427]
+-  owasp: ["LLM01:2025 Prompt Injection"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM01]}  # 2025 identifiers follow the edition's lineage
+   severity: MEDIUM
+   description: When the user's request conflicted with the system instructions, the application followed the user.
+   impact: Configured restrictions (scope, tone, data boundaries) can be bypassed by asking.
+@@ -647,7 +672,8 @@ jailbreak_resistance:
+   name: Policy Bypass (Jailbreak Resistance)
+   engine: AISEC
+   cwe: [CWE-1427]
+-  owasp: ["LLM01:2025 Prompt Injection"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM01]}  # 2025 identifiers follow the edition's lineage
+   severity: MEDIUM
+   description: A role-play or framing technique caused the application to step outside its configured policy (tested with a harmless marker, never harmful content).
+   impact: Users can obtain behaviour the application is configured to refuse.
+@@ -660,7 +686,8 @@ system_prompt_exposure:
+   name: System Prompt Leakage
+   engine: AISEC
+   cwe: [CWE-200, CWE-497]
+-  owasp: ["LLM07:2025 System Prompt Leakage"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM08]}  # 2025 identifiers follow the edition's lineage
+   severity: MEDIUM
+   description: The application revealed its hidden system instructions.
+   impact: Leaked instructions reveal business logic, internal names and any secrets embedded in them, and make targeted injection easier.
+@@ -673,7 +700,8 @@ sensitive_data_disclosure:
+   name: Sensitive Information Disclosure
+   engine: AISEC
+   cwe: [CWE-200, CWE-359]
+-  owasp: ["LLM02:2025 Sensitive Information Disclosure"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM02]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: The application disclosed data it was configured to protect (planted canary secrets, credentials or personal data).
+   impact: Exposure of credentials, personal data or confidential business information.
+@@ -686,7 +714,8 @@ unauthorized_retrieval:
+   name: Unauthorized Document Retrieval
+   engine: AISEC
+   cwe: [CWE-863, CWE-639]
+-  owasp: ["LLM08:2025 Vector and Embedding Weaknesses", "LLM02:2025 Sensitive Information Disclosure"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM09, LLM02]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: The retrieval layer returned documents the requesting user is not authorized to read.
+   impact: Users can read restricted documents by asking questions.
+@@ -699,7 +728,8 @@ cross_user_exposure:
+   name: Cross-User Information Exposure
+   engine: AISEC
+   cwe: [CWE-639, CWE-359]
+-  owasp: ["LLM02:2025 Sensitive Information Disclosure", "LLM08:2025 Vector and Embedding Weaknesses"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM02, LLM09]}  # 2025 identifiers follow the edition's lineage
+   severity: CRITICAL
+   description: Data belonging to one user appeared in responses to a different user.
+   impact: Privacy breach across tenants or accounts.
+@@ -712,7 +742,8 @@ rag_injection:
+   name: Retrieved-Content Instruction Injection
+   engine: AISEC
+   cwe: [CWE-1427]
+-  owasp: ["LLM01:2025 Prompt Injection", "LLM08:2025 Vector and Embedding Weaknesses"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM01, LLM09]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: Instructions placed inside a retrieved document changed the application's behaviour.
+   impact: Anyone able to add content to the knowledge base can control answers and actions.
+@@ -725,7 +756,8 @@ retrieval_boundary:
+   name: Retrieval Boundary Failure
+   engine: AISEC
+   cwe: [CWE-863]
+-  owasp: ["LLM08:2025 Vector and Embedding Weaknesses"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM09]}  # 2025 identifiers follow the edition's lineage
+   severity: MEDIUM
+   description: The retrieval layer returned content outside the configured collection, tenant or classification boundary.
+   impact: Answers may include out-of-scope or restricted material.
+@@ -738,7 +770,8 @@ unauthorized_tool_call:
+   name: Unauthorized Tool Call
+   engine: AISEC
+   cwe: [CWE-862, CWE-863]
+-  owasp: ["LLM06:2025 Excessive Agency"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM03]}  # 2025 identifiers follow the edition's lineage
+   severity: CRITICAL
+   description: The agent executed a tool or action the current user is not permitted to perform.
+   impact: Privilege escalation through the agent — actions performed with the agent's permissions instead of the user's.
+@@ -751,7 +784,8 @@ excessive_permissions:
+   name: Excessive Agent Permissions
+   engine: AISEC
+   cwe: [CWE-250]
+-  owasp: ["LLM06:2025 Excessive Agency"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM03]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: The agent attempted to use capabilities beyond what its task requires; the attempt itself shows that the tool is reachable.
+   impact: A successful injection could escalate to destructive or sensitive actions.
+@@ -764,7 +798,8 @@ unsafe_tool_handling:
+   name: Tool Input Manipulation
+   engine: AISEC
+   cwe: [CWE-20]
+-  owasp: ["LLM06:2025 Excessive Agency", "LLM05:2025 Improper Output Handling"]
++  taxonomy:
++    owasp_llm: {"2026": [LLM03, LLM10]}  # 2025 identifiers follow the edition's lineage
+   severity: HIGH
+   description: Untrusted content caused the agent to call a tool with manipulated arguments (for example a different recipient or target).
+   impact: Actions are redirected to attacker-chosen targets.
+@@ -778,7 +813,6 @@ ldap_injection:
+   name: LDAP Injection
+   engine: APPSEC
+   cwe: [CWE-90]
+-  owasp: ["A03:2021 Injection"]
+   severity: HIGH
+   description: Untrusted input is placed into an LDAP search filter or distinguished name without escaping, so characters such as * ( ) and \ change the query.
+   impact: Authentication bypass and disclosure of directory entries the user should not see.
+@@ -795,7 +829,6 @@ jndi_injection:
+   name: JNDI Injection
+   engine: APPSEC
+   cwe: [CWE-74, CWE-917]
+-  owasp: ["A03:2021 Injection"]
+   severity: CRITICAL
+   description: A JNDI lookup uses a name that the user controls. A crafted ldap:// or rmi:// name makes the JVM load and instantiate remote objects — the mechanism behind Log4Shell.
+   impact: Remote code execution in the JVM.
+@@ -808,7 +841,6 @@ expression_injection:
+   name: Expression Language Injection
+   engine: APPSEC
+   cwe: [CWE-917]
+-  owasp: ["A03:2021 Injection"]
+   severity: CRITICAL
+   description: User input is evaluated as an expression (SpEL, OGNL, MVEL, EL). Expression languages can call arbitrary methods.
+   impact: Remote code execution.
+@@ -821,7 +853,7 @@ buffer_overflow:
+   name: Buffer Overflow
+   engine: APPSEC
+   cwe: [CWE-120, CWE-787]
+-  owasp: []  # no OWASP Top 10 category fits; CWE is the reference taxonomy
++  # No OWASP Top 10 category fits memory-safety weaknesses; CWE is the reference taxonomy.
+   severity: CRITICAL
+   description: Data is copied into a fixed-size buffer without checking that it fits (strcpy, strcat, sprintf, gets, scanf("%s")). Bytes beyond the buffer overwrite adjacent memory.
+   impact: Memory corruption — crashes, data corruption and, commonly, arbitrary code execution by overwriting return addresses or function pointers.
+@@ -842,7 +874,7 @@ out_of_bounds:
+   name: Out-of-Bounds Access
+   engine: APPSEC
+   cwe: [CWE-125, CWE-787, CWE-129]
+-  owasp: []  # no OWASP Top 10 category fits; CWE is the reference taxonomy
++  # No OWASP Top 10 category fits memory-safety weaknesses; CWE is the reference taxonomy.
+   severity: HIGH
+   description: An index or length derived from input is used to read or write memory without verifying it is within the object's bounds.
+   impact: Out-of-bounds reads leak memory (secrets, pointers); out-of-bounds writes corrupt memory and can lead to code execution.
+@@ -859,7 +891,7 @@ use_after_free:
+   name: Use After Free
+   engine: APPSEC
+   cwe: [CWE-416]
+-  owasp: []  # no OWASP Top 10 category fits; CWE is the reference taxonomy
++  # No OWASP Top 10 category fits memory-safety weaknesses; CWE is the reference taxonomy.
+   severity: CRITICAL
+   description: Memory is accessed through a pointer after it has been freed. The allocator may already have handed that memory to another object.
+   impact: Memory corruption that attackers commonly turn into arbitrary code execution.
+@@ -879,7 +911,7 @@ double_free:
+   name: Double Free
+   engine: APPSEC
+   cwe: [CWE-415]
+-  owasp: []  # no OWASP Top 10 category fits; CWE is the reference taxonomy
++  # No OWASP Top 10 category fits memory-safety weaknesses; CWE is the reference taxonomy.
+   severity: HIGH
+   description: The same memory is freed twice.
+   impact: Allocator metadata corruption, which can be exploited for arbitrary writes and code execution.
+@@ -892,7 +924,8 @@ format_string:
+   name: Format String Vulnerability
+   engine: APPSEC
+   cwe: [CWE-134]
+-  owasp: ["A03:2021 Injection"]
++  # No OWASP Top 10 list includes CWE-134. Its CWE parent (CWE-668) is too abstract to imply
++  # a category, so CWE is the reference taxonomy.
+   severity: CRITICAL
+   description: User-controlled data is passed as the format argument of printf-style functions. Directives such as %x and %n read and write stack memory.
+   impact: Information disclosure and arbitrary memory writes leading to code execution.
+@@ -909,7 +942,7 @@ integer_overflow:
+   name: Integer Overflow
+   engine: APPSEC
+   cwe: [CWE-190, CWE-680]
+-  owasp: []  # no OWASP Top 10 category fits; CWE is the reference taxonomy
++  # No OWASP Top 10 category fits memory-safety weaknesses; CWE is the reference taxonomy.
+   severity: HIGH
+   description: A size or count computation can wrap around (for example n * sizeof(item)), producing a small allocation that is later overflowed.
+   impact: Heap overflows and memory corruption.
+@@ -926,7 +959,6 @@ race_condition:
+   name: Race Condition
+   engine: APPSEC
+   cwe: [CWE-362, CWE-367]
+-  owasp: []  # no OWASP Top 10 category fits; CWE is the reference taxonomy
+   severity: MEDIUM
+   description: The outcome depends on the timing of concurrent operations — a check followed by a use that can be interleaved (TOCTOU), or shared state modified by several threads or goroutines without synchronization.
+   impact: Security checks can be bypassed between check and use; unsynchronized shared state causes corruption and inconsistent authorization decisions.
+@@ -947,7 +979,8 @@ unsafe_http_handling:
+   name: Unsafe HTTP Handling
+   engine: APPSEC
+   cwe: [CWE-400, CWE-770]
+-  owasp: ["A05:2021 Security Misconfiguration"]
++  taxonomy:
++    owasp_api: {"2023": [API4]}  # missing limits and timeouts
+   severity: MEDIUM
+   description: The HTTP server or handler lacks resource limits — no read/header timeouts, or request bodies read without a size cap.
+   impact: Denial of service through slow clients (Slowloris) or oversized requests that exhaust memory.
+diff --git a/securelens-ai/backend/securelens/findings/model.py b/securelens-ai/backend/securelens/findings/model.py
+index 1a76dfe..fcce289 100644
+--- a/securelens-ai/backend/securelens/findings/model.py
++++ b/securelens-ai/backend/securelens/findings/model.py
+@@ -3,7 +3,10 @@
+ Both the Application Security Engine and the AI Security Engine emit
+ ``Finding`` objects. Severity, confidence and verification are independent
+ axes: severity is how bad the issue is if real, confidence is how sure the
+-evidence makes us, verification is how the finding is known.
++evidence makes us, verification is how the finding is known. The evidence
++class says how the evidence itself was obtained (static analysis, a dynamic
++test, an AI model, a person), and ``limitations`` says what the evidence does
++not show.
+ """
+ 
+ from __future__ import annotations
+@@ -17,6 +20,7 @@ from securelens.enums import (
+     SEVERITY_ORDER,
+     Confidence,
+     Engine,
++    EvidenceClass,
+     Exploitability,
+     Severity,
+     SourceKind,
+@@ -25,7 +29,7 @@ from securelens.enums import (
+ 
+ EvidenceKind = Literal[
+     "dataflow", "pattern", "code", "secret", "dependency", "scanner_output", "test_input", "model_response",
+-    "tool_call", "retrieval", "criterion", "correlation",
++    "tool_call", "retrieval", "criterion", "correlation", "test_result", "ai_analysis", "manual",
+ ]
+ 
+ 
+@@ -49,6 +53,8 @@ class Evidence(BaseModel):
+     summary: str
+     location: Location | None = None
+     data: dict[str, Any] = Field(default_factory=dict)
++    evidence_class: EvidenceClass | None = Field(
++        default=None, description="How this evidence was obtained; None for bookkeeping entries such as correlation")
+ 
+ 
+ class Finding(BaseModel):
+@@ -64,8 +70,12 @@ class Finding(BaseModel):
+     confidence: Confidence
+     exploitability: Exploitability = Exploitability.POSSIBLE
+     verification: Verification = Verification.DETECTED
++    evidence_class: EvidenceClass = EvidenceClass.STATIC_ANALYSIS_FINDING
+     cwe: list[str] = Field(default_factory=list)
+-    owasp: list[str] = Field(default_factory=list)
++    owasp: list[str] = Field(default_factory=list, description="Current-edition OWASP labels, e.g. A05:2025 Injection")
++    taxonomy: list[dict[str, Any]] = Field(
++        default_factory=list, description="Versioned mappings, current and historical, with the basis of each")
++    language: str | None = None
+     location: Location | None = None
+     evidence: list[Evidence] = Field(default_factory=list)
+     description: str = ""
+@@ -79,6 +89,8 @@ class Finding(BaseModel):
+     tags: list[str] = Field(default_factory=list)
+     public_id: str | None = None
+     risk_score: float | None = None
++    tool_version: str | None = None
++    limitations: list[str] = Field(default_factory=list)
+ 
+     def sort_key(self) -> tuple:
+         loc = self.location
+diff --git a/securelens-ai/backend/securelens/scanners/dependencies/scanner.py b/securelens-ai/backend/securelens/scanners/dependencies/scanner.py
+index be6a2c0..a347160 100644
+--- a/securelens-ai/backend/securelens/scanners/dependencies/scanner.py
++++ b/securelens-ai/backend/securelens/scanners/dependencies/scanner.py
+@@ -116,10 +116,9 @@ def _finding(dep: DependencyRecord, adv, manifest_lines: dict[str, list[str]]) -
+         title=title,
+         category=vc.name,
+         severity=adv.severity,
+-        confidence=__import__("securelens.enums", fromlist=["Confidence"]).Confidence.HIGH,
++        confidence=Confidence.HIGH,
+         exploitability=Exploitability.POSSIBLE,
+         cwe=list(vc.cwe),
+-        owasp=list(vc.owasp),
+         location=location,
+         evidence=[Evidence(
+             kind="dependency",
+diff --git a/securelens-ai/backend/securelens/scanners/engine.py b/securelens-ai/backend/securelens/scanners/engine.py
+index 345f2af..e00233d 100644
+--- a/securelens-ai/backend/securelens/scanners/engine.py
++++ b/securelens-ai/backend/securelens/scanners/engine.py
+@@ -14,6 +14,7 @@ from pathlib import Path
+ 
+ from securelens.enums import Engine
+ from securelens.findings import fingerprint
++from securelens.findings.annotate import annotate
+ from securelens.findings.correlation import correlate
+ from securelens.findings.model import Finding, ScannerRun, ScanResult
+ from securelens.scanners.base import ScanContext, ScannerResult, ScanOptions
+@@ -123,10 +124,16 @@ def assign_ids(findings: list[Finding]) -> None:
+         f.public_id = f"SL-AI-{i:03d}"
+ 
+ 
++def tool_version() -> str:
++    return f"SecureLens AI {__version__}"
++
++
+ def finalize(result: ScanResult) -> ScanResult:
+     findings = correlate(result.findings)
++    languages = {record.path: record.language for record in result.files}
+     for f in findings:
+         _redact_finding(f)
++        annotate(f, tool_version=tool_version(), language=languages.get(f.location.path) if f.location else None)
+         f.fingerprint = fingerprint.compute(f)
+     # Two correlated groups can still share a fingerprint (same line text in one function); keep the stronger one.
+     unique: dict[str, Finding] = {}
+diff --git a/securelens-ai/backend/securelens/scanners/external.py b/securelens-ai/backend/securelens/scanners/external.py
+index a3ee4cd..9e2a786 100644
+--- a/securelens-ai/backend/securelens/scanners/external.py
++++ b/securelens-ai/backend/securelens/scanners/external.py
+@@ -72,8 +72,7 @@ def _finding(*, tool: str, rule_id: str, vuln_class: str, title: str, message: s
+         severity=severity,
+         confidence=confidence,
+         exploitability=Exploitability.THEORETICAL,
+-        cwe=list(dict.fromkeys([c for c in cwes if c] + list(vc.cwe))),
+-        owasp=list(vc.owasp),
++        cwe=list(dict.fromkeys(c for c in cwes if c)) or list(vc.cwe),
+         location=location,
+         evidence=[Evidence(kind="scanner_output", source=tool, summary=redact_text(message, path) or message,
+                            location=location, data=extra)],
+diff --git a/securelens-ai/backend/securelens/scanners/sast/rules/c.yml b/securelens-ai/backend/securelens/scanners/sast/rules/c.yml
+index 3346f27..242642f 100644
+--- a/securelens-ai/backend/securelens/scanners/sast/rules/c.yml
++++ b/securelens-ai/backend/securelens/scanners/sast/rules/c.yml
+@@ -67,6 +67,7 @@ sinks:
+     source_kinds: [user_input, http]
+   - id: SL-C-OOB-001
+     vuln_class: out_of_bounds
++    cwe: [CWE-787]
+     title: Memory copy with an untrusted length
+     message: The number of bytes copied comes from input and is not checked against the destination size
+     severity: HIGH
+@@ -75,6 +76,7 @@ sinks:
+     source_kinds: [user_input, http]
+   - id: SL-C-OOB-002
+     vuln_class: out_of_bounds
++    cwe: [CWE-129]
+     title: Array index derived from untrusted input
+     message: An array is indexed with a value derived from input; no bounds check could be established
+     severity: HIGH
+diff --git a/securelens-ai/backend/securelens/scanners/sast/rules/php.yml b/securelens-ai/backend/securelens/scanners/sast/rules/php.yml
+index a3149ba..d4534ae 100644
+--- a/securelens-ai/backend/securelens/scanners/sast/rules/php.yml
++++ b/securelens-ai/backend/securelens/scanners/sast/rules/php.yml
+@@ -197,6 +197,7 @@ sinks:
+     cwe: [CWE-256]
+   - id: SL-PHP-AUTHZ-001
+     vuln_class: broken_authorization
++    cwe: [CWE-639]
+     title: Record fetched by a client-supplied identifier without an ownership check
+     message: A model is loaded by an identifier from the request and the code does not reference the current user
+     severity: MEDIUM
+diff --git a/securelens-ai/backend/securelens/scanners/sast/rules/python.yml b/securelens-ai/backend/securelens/scanners/sast/rules/python.yml
+index 42f66b1..8454a1e 100644
+--- a/securelens-ai/backend/securelens/scanners/sast/rules/python.yml
++++ b/securelens-ai/backend/securelens/scanners/sast/rules/python.yml
+@@ -262,6 +262,7 @@ sinks:
+   # --- authorization ------------------------------------------------------
+   - id: SL-PY-AUTHZ-001
+     vuln_class: broken_authorization
++    cwe: [CWE-639]
+     title: Record fetched by a client-supplied identifier without an ownership check
+     message: An object is loaded using an identifier from the request and the handler does not reference the current user, which may allow insecure direct object references (IDOR)
+     severity: MEDIUM
+diff --git a/securelens-ai/backend/securelens/scanners/sast/scanner.py b/securelens-ai/backend/securelens/scanners/sast/scanner.py
+index f99ac1b..0ba6e24 100644
+--- a/securelens-ai/backend/securelens/scanners/sast/scanner.py
++++ b/securelens-ai/backend/securelens/scanners/sast/scanner.py
+@@ -89,8 +89,12 @@ def convert(raw: RawFinding, lines: dict[str, list[str]]) -> Finding:
+     vc = catalog.get(raw.vuln_class)
+     base = catalog.get(raw.base_class) if raw.base_class and raw.base_class != raw.vuln_class and catalog.known(
+         raw.base_class) else None
+-    cwe = list(dict.fromkeys([*raw.cwe, *(base.cwe if base else ()), *vc.cwe]))
+-    owasp = list(dict.fromkeys([*vc.owasp, *(base.owasp if base else ())]))
++    # A rule's own CWEs are more precise than its class's; the class list is the fallback. An AI finding that
++    # reaches an application sink carries both the AI weakness and the sink's weakness.
++    if base is not None:
++        cwe = list(dict.fromkeys([*vc.cwe, *(raw.cwe or base.cwe)]))
++    else:
++        cwe = list(raw.cwe or vc.cwe)
+     title = raw.title or vc.name
+     if base is not None and raw.vuln_class == "llm_output_handling":
+         title = f"LLM output reaches a {base.name} sink"
+@@ -149,7 +153,7 @@ def convert(raw: RawFinding, lines: dict[str, list[str]]) -> Finding:
+         confidence=raw.confidence,
+         exploitability=raw.exploitability,
+         cwe=cwe,
+-        owasp=owasp,
++        language=raw.language,
+         location=location,
+         evidence=evidence,
+         description=f"{raw.message} {vc.description}".strip(),
+diff --git a/securelens-ai/backend/securelens/scanners/secrets/scanner.py b/securelens-ai/backend/securelens/scanners/secrets/scanner.py
+index ec0ff25..21599f0 100644
+--- a/securelens-ai/backend/securelens/scanners/secrets/scanner.py
++++ b/securelens-ai/backend/securelens/scanners/secrets/scanner.py
+@@ -49,7 +49,6 @@ class SecretsScanner:
+                     confidence=match.confidence,
+                     exploitability=Exploitability.LIKELY,
+                     cwe=list(vc.cwe),
+-                    owasp=list(vc.owasp),
+                     location=location,
+                     evidence=[Evidence(
+                         kind="secret",
+diff --git a/securelens-ai/backend/securelens/taxonomy/__init__.py b/securelens-ai/backend/securelens/taxonomy/__init__.py
+new file mode 100644
+index 0000000..7f9b5be
+--- /dev/null
++++ b/securelens-ai/backend/securelens/taxonomy/__init__.py
+@@ -0,0 +1,380 @@
++"""Versioned security taxonomies: OWASP Top 10, API Security Top 10, LLM Top 10.
++
++SecureLens never mixes editions silently. Every mapping is a ``TaxonomyRef``
++that names the framework, the edition, whether that edition is current or
++historical, and *why* the mapping holds (``basis``):
++
++``cwe``
++    One of the finding's CWEs appears in the category's official "List of
++    Mapped CWEs" (OWASP Top 10 only; the lists live in ``registry.yml``).
++``parent_cwe``
++    The catalog opted in to a parent CWE, verified on the CWE site, and that
++    parent appears in the category's official list.
++``curated``
++    A reviewed, class-level mapping. Used for the API and LLM lists, which do
++    not publish CWE mappings, and for the rare Top 10 case the CWE lists cannot
++    express (documented next to the entry in the catalog).
++``lineage``
++    The historical identifier of a curated current mapping, taken from the
++    current edition's published change table.
++"""
++
++from __future__ import annotations
++
++import re
++from collections.abc import Iterable, Mapping, Sequence
++from dataclasses import dataclass, field
++from functools import lru_cache
++from importlib import resources
++from typing import Any, Protocol
++
++import yaml
++
++FRAMEWORK_ORDER = ("owasp_top10", "owasp_api", "owasp_llm")
++BASES = ("cwe", "parent_cwe", "curated", "lineage")
++_CWE_RE = re.compile(r"^\s*(?:CWE-)?(\d{1,5})\s*$", re.IGNORECASE)
++
++
++class TaxonomyError(ValueError):
++    """The registry or a catalog mapping is inconsistent."""
++
++
++@dataclass(frozen=True)
++class Category:
++    framework: str
++    edition: str
++    id: str
++    name: str
++    url: str
++    cwes: frozenset[int] = frozenset()
++    previous: Mapping[str, str] = field(default_factory=dict)
++    note: str | None = None
++
++    @property
++    def label(self) -> str:
++        return f"{self.id}:{self.edition} {self.name}"
++
++
++@dataclass(frozen=True)
++class Edition:
++    framework: str
++    key: str
++    status: str
++    title: str
++    source_url: str
++    verified_on: str
++    categories: Mapping[str, Category]
++    license: str | None = None
++    note: str | None = None
++
++    @property
++    def current(self) -> bool:
++        return self.status == "current"
++
++    def describe(self) -> dict[str, Any]:
++        return {"framework": self.framework, "edition": self.key, "title": self.title, "status": self.status,
++                "source_url": self.source_url, "verified_on": self.verified_on, "license": self.license}
++
++
++@dataclass(frozen=True)
++class Framework:
++    key: str
++    name: str
++    publisher: str
++    editions: Mapping[str, Edition]
++
++    @property
++    def current(self) -> Edition:
++        return next(e for e in self.editions.values() if e.current)
++
++    def ordered_editions(self) -> list[Edition]:
++        """Current edition first, then historical editions from newest to oldest."""
++        newest_first = sorted(self.editions.values(), key=lambda e: e.key, reverse=True)
++        return sorted(newest_first, key=lambda e: not e.current)
++
++
++@dataclass(frozen=True)
++class Registry:
++    frameworks: Mapping[str, Framework]
++    cwe_version: str
++    cwe_verified_on: str
++    cwe_parents: Mapping[int, int]
++
++    def framework(self, key: str) -> Framework:
++        try:
++            return self.frameworks[key]
++        except KeyError:
++            raise TaxonomyError(f"unknown taxonomy framework: {key}") from None
++
++    def edition(self, framework: str, edition: str) -> Edition:
++        fw = self.framework(framework)
++        try:
++            return fw.editions[str(edition)]
++        except KeyError:
++            raise TaxonomyError(f"unknown edition {edition} of {framework}") from None
++
++    def category(self, framework: str, edition: str, category_id: str) -> Category:
++        ed = self.edition(framework, edition)
++        try:
++            return ed.categories[category_id]
++        except KeyError:
++            raise TaxonomyError(f"unknown category {category_id} in {framework} {edition}") from None
++
++
++@dataclass(frozen=True)
++class TaxonomyRef:
++    framework: str
++    edition: str
++    id: str
++    name: str
++    status: str
++    basis: str
++    via: str | None = None
++    url: str | None = None
++
++    @property
++    def label(self) -> str:
++        return f"{self.id}:{self.edition} {self.name}"
++
++    @property
++    def historical(self) -> bool:
++        return self.status == "historical"
++
++    def to_dict(self) -> dict[str, Any]:
++        return {"framework": self.framework, "edition": self.edition, "id": self.id, "name": self.name,
++                "label": self.label, "status": self.status, "historical": self.historical, "basis": self.basis,
++                "via": self.via, "url": self.url}
++
++
++class MappedClass(Protocol):
++    """What the mapper needs from a catalog vulnerability class."""
++
++    key: str
++    engine: Any
++    cwe: tuple[str, ...]
++    top10_parent_cwe: str | None
++    curated: Mapping[str, Mapping[str, tuple[Any, ...]]]
++
++
++def cwe_number(value: str | int | None) -> int | None:
++    if value is None:
++        return None
++    if isinstance(value, int):
++        return value
++    m = _CWE_RE.match(str(value))
++    return int(m.group(1)) if m else None
++
++
++def _load() -> Registry:
++    raw = yaml.safe_load(resources.files("securelens.taxonomy").joinpath("registry.yml").read_text("utf-8"))
++    frameworks: dict[str, Framework] = {}
++    for fw_key, fw in raw["frameworks"].items():
++        editions: dict[str, Edition] = {}
++        for ed_key, ed in fw["editions"].items():
++            ed_key = str(ed_key)
++            categories: dict[str, Category] = {}
++            for cat_id, cat in ed["categories"].items():
++                categories[cat_id] = Category(
++                    framework=fw_key, edition=ed_key, id=cat_id, name=cat["name"],
++                    url=cat.get("url") or ed["source_url"],
++                    cwes=frozenset(int(c) for c in cat.get("cwes", [])),
++                    previous={str(k): v for k, v in (cat.get("previous") or {}).items()},
++                    note=cat.get("note"),
++                )
++            editions[ed_key] = Edition(
++                framework=fw_key, key=ed_key, status=ed["status"], title=ed["title"], source_url=ed["source_url"],
++                verified_on=str(ed["verified_on"]), categories=categories, license=ed.get("license"),
++                note=" ".join(str(ed["note"]).split()) if ed.get("note") else None,
++            )
++        frameworks[fw_key] = Framework(key=fw_key, name=fw["name"], publisher=fw.get("publisher", ""),
++                                       editions=editions)
++    cwe = raw.get("cwe") or {}
++    reg = Registry(frameworks=frameworks, cwe_version=str(cwe.get("version", "")),
++                   cwe_verified_on=str(cwe.get("verified_on", "")),
++                   cwe_parents={int(k): int(v) for k, v in (cwe.get("parents") or {}).items()})
++    _validate_registry(reg)
++    return reg
++
++
++def _validate_registry(reg: Registry) -> None:
++    for fw in reg.frameworks.values():
++        current = [e for e in fw.editions.values() if e.current]
++        if len(current) != 1:
++            raise TaxonomyError(f"{fw.key} must have exactly one current edition, found {len(current)}")
++        for ed in fw.editions.values():
++            if ed.status not in ("current", "historical"):
++                raise TaxonomyError(f"{fw.key} {ed.key}: invalid status {ed.status}")
++            for cat in ed.categories.values():
++                for prev_edition, prev_id in cat.previous.items():
++                    if prev_edition not in fw.editions or prev_id not in fw.editions[prev_edition].categories:
++                        raise TaxonomyError(f"{cat.label}: lineage points to unknown {prev_id}:{prev_edition}")
++
++
++@lru_cache(maxsize=1)
++def registry() -> Registry:
++    return _load()
++
++
++def _ref(cat: Category, status: str, basis: str, via: str | None = None) -> TaxonomyRef:
++    return TaxonomyRef(framework=cat.framework, edition=cat.edition, id=cat.id, name=cat.name, status=status,
++                       basis=basis, via=via, url=cat.url)
++
++
++def top10_for_cwes(cwes: Iterable[str | int], edition: str | None = None) -> list[TaxonomyRef]:
++    """OWASP Top 10 categories whose official CWE list contains one of ``cwes``."""
++    reg = registry()
++    fw = reg.framework("owasp_top10")
++    editions = [reg.edition("owasp_top10", edition)] if edition else fw.ordered_editions()
++    numbers = list(dict.fromkeys(n for n in (cwe_number(c) for c in cwes) if n is not None))
++    refs: list[TaxonomyRef] = []
++    for ed in editions:
++        for cat in ed.categories.values():
++            hit = next((n for n in numbers if n in cat.cwes), None)
++            if hit is not None:
++                refs.append(_ref(cat, ed.status, "cwe", f"CWE-{hit}"))
++    return refs
++
++
++def _curated_entries(entries: Sequence[Any], cwes: set[int] | None) -> list[str]:
++    """Curated entries are IDs, or ``{id, when_cwe}`` that apply only to findings with one of those CWEs."""
++    out: list[str] = []
++    for entry in entries:
++        if isinstance(entry, str):
++            out.append(entry)
++            continue
++        condition = {cwe_number(c) for c in entry.get("when_cwe", [])}
++        if cwes is None or condition & cwes:
++            out.append(entry["id"])
++    return out
++
++
++def map_finding(classes: Sequence[MappedClass], cwes: Sequence[str]) -> list[TaxonomyRef]:
++    """All taxonomy references for one finding.
++
++    ``classes`` is the finding's vulnerability class followed by the class of
++    the sink it reaches, if any (an LLM output reaching a SQL sink is also SQL
++    injection). ``cwes`` are the finding's own CWEs.
++
++    The web Top 10 is derived from CWEs of application-security classes only:
++    an AI class's own CWEs (e.g. excessive agency) would otherwise produce a
++    technically listed but misleading web category.
++    """
++    reg = registry()
++    if not classes:
++        return []
++    primary = classes[0]
++    appsec = [c for c in classes if str(getattr(c.engine, "value", c.engine)) == "APPSEC"]
++    if appsec and appsec[0] is primary:
++        derive_from = list(cwes)
++    elif appsec:
++        # An AI finding that reaches an application sink: derive from the sink's CWEs, not the AI class's own.
++        ai_only = {cwe_number(x) for x in primary.cwe} - {cwe_number(x) for c in appsec for x in c.cwe}
++        derive_from = [c for c in cwes if cwe_number(c) not in ai_only]
++    else:
++        derive_from = []
++    finding_cwes = {n for n in (cwe_number(c) for c in cwes) if n is not None}
++
++    refs: list[TaxonomyRef] = []
++    seen: set[tuple[str, str, str]] = set()
++
++    def add(ref: TaxonomyRef) -> None:
++        key = (ref.framework, ref.edition, ref.id)
++        if key not in seen:
++            seen.add(key)
++            refs.append(ref)
++
++    top10 = reg.framework("owasp_top10")
++    for ed in top10.ordered_editions():
++        direct = top10_for_cwes(derive_from, ed.key)
++        for ref in direct:
++            add(ref)
++        if not direct:
++            for cls in appsec:
++                parent = cwe_number(cls.top10_parent_cwe)
++                if parent is None:
++                    continue
++                child = next((cwe_number(c) for c in cls.cwe if reg.cwe_parents.get(cwe_number(c) or -1) == parent),
++                             None)
++                for cat in ed.categories.values():
++                    if parent in cat.cwes:
++                        add(_ref(cat, ed.status, "parent_cwe", f"CWE-{parent} (parent of CWE-{child})"))
++        for cls in appsec:
++            for cat_id in _curated_entries(cls.curated.get("owasp_top10", {}).get(ed.key, ()), finding_cwes):
++                add(_ref(reg.category("owasp_top10", ed.key, cat_id), ed.status, "curated"))
++
++    for fw_key in ("owasp_api", "owasp_llm"):
++        fw = reg.framework(fw_key)
++        for cls in classes:
++            for ed_key, entries in cls.curated.get(fw_key, {}).items():
++                ed = reg.edition(fw_key, ed_key)
++                for cat_id in _curated_entries(entries, finding_cwes):
++                    cat = ed.categories[cat_id]
++                    add(_ref(cat, ed.status, "curated"))
++                    for prev_edition, prev_id in cat.previous.items():
++                        prev = fw.editions[prev_edition]
++                        add(_ref(prev.categories[prev_id], prev.status, "lineage", cat.label))
++    order = {k: i for i, k in enumerate(FRAMEWORK_ORDER)}
++    if str(getattr(primary.engine, "value", primary.engine)) == "AISEC":
++        order = {"owasp_llm": 0, "owasp_top10": 1, "owasp_api": 2}
++    return sorted(refs, key=lambda r: (order.get(r.framework, 9), r.historical, r.id))
++
++
++def map_class(cls: MappedClass) -> list[TaxonomyRef]:
++    """Class-level mapping for lessons and catalog pages: every conditional entry is included."""
++    reg = registry()
++    refs = map_finding([cls], list(cls.cwe))
++    seen = {(r.framework, r.edition, r.id) for r in refs}
++    for fw_key, editions in cls.curated.items():
++        for ed_key, entries in editions.items():
++            ed = reg.edition(fw_key, ed_key)
++            for cat_id in _curated_entries(entries, None):
++                if (fw_key, ed_key, cat_id) not in seen:
++                    refs.append(_ref(ed.categories[cat_id], ed.status, "curated"))
++                    seen.add((fw_key, ed_key, cat_id))
++    return refs
++
++
++def current_labels(refs: Iterable[TaxonomyRef | Mapping[str, Any]]) -> list[str]:
++    out: list[str] = []
++    for ref in refs:
++        data = ref.to_dict() if isinstance(ref, TaxonomyRef) else ref
++        if not data.get("historical"):
++            out.append(str(data["label"]))
++    return list(dict.fromkeys(out))
++
++
++def editions_in_use() -> list[dict[str, Any]]:
++    """Every edition SecureLens maps to, current first — printed in report methodology."""
++    reg = registry()
++    out = []
++    for key in FRAMEWORK_ORDER:
++        out.extend(ed.describe() for ed in reg.framework(key).ordered_editions())
++    return out
++
++
++def validate_class(cls: MappedClass) -> list[str]:
++    """Problems with one catalog class's mappings (empty when consistent)."""
++    reg = registry()
++    problems: list[str] = []
++    for fw_key, editions in cls.curated.items():
++        if fw_key not in reg.frameworks:
++            problems.append(f"{cls.key}: unknown framework {fw_key}")
++            continue
++        for ed_key, entries in editions.items():
++            if ed_key not in reg.frameworks[fw_key].editions:
++                problems.append(f"{cls.key}: unknown edition {fw_key} {ed_key}")
++                continue
++            ed = reg.frameworks[fw_key].editions[ed_key]
++            if fw_key == "owasp_llm" and not ed.current:
++                problems.append(f"{cls.key}: map {fw_key} to the current edition only; history follows lineage")
++            for entry in entries:
++                cat_id = entry if isinstance(entry, str) else entry.get("id")
++                if cat_id not in ed.categories:
++                    problems.append(f"{cls.key}: {cat_id} is not a category of {fw_key} {ed_key}")
++                if not isinstance(entry, str) and not entry.get("when_cwe"):
++                    problems.append(f"{cls.key}: conditional entry {cat_id} needs when_cwe")
++    if cls.top10_parent_cwe:
++        parent = cwe_number(cls.top10_parent_cwe)
++        if not any(reg.cwe_parents.get(cwe_number(c) or -1) == parent for c in cls.cwe):
++            problems.append(f"{cls.key}: {cls.top10_parent_cwe} is not a verified parent of {list(cls.cwe)}")
++    return problems
+diff --git a/securelens-ai/backend/securelens/taxonomy/registry.yml b/securelens-ai/backend/securelens/taxonomy/registry.yml
+new file mode 100644
+index 0000000..0c2954a
+--- /dev/null
++++ b/securelens-ai/backend/securelens/taxonomy/registry.yml
+@@ -0,0 +1,226 @@
++# SecureLens taxonomy registry.
++#
++# Each edition records its primary source and the date SecureLens last checked
++# it. For OWASP Top 10 editions, every category lists the CWE identifiers from
++# that category's official "List of Mapped CWEs"; SecureLens derives a
++# finding's Top 10 category from its CWEs using exactly these lists. Nothing in
++# this file comes from memory or secondary sources. When an edition is
++# re-checked, update `verified_on`; when a new edition is published, add it and
++# move the old one to `status: historical` — never edit history in place.
++#
++# Status values: current | historical. Historical editions are always labelled
++# as such wherever SecureLens displays them.
++
++schema_version: 1
++
++frameworks:
++  owasp_top10:
++    name: OWASP Top 10
++    publisher: OWASP Foundation
++    editions:
++      "2025":
++        status: current
++        title: OWASP Top 10:2025
++        source_url: https://top10.owasp.org/2025/
++        verified_on: "2026-09-30"
++        categories:
++          A01:
++            name: Broken Access Control
++            url: https://top10.owasp.org/2025/A01_2025-Broken_Access_Control/
++            cwes: [22, 23, 36, 59, 61, 65, 200, 201, 219, 276, 281, 282, 283, 284, 285, 352, 359, 377, 379, 402,
++                   424, 425, 441, 497, 538, 540, 548, 552, 566, 601, 615, 639, 668, 732, 749, 862, 863, 918, 922,
++                   1275]
++          A02:
++            name: Security Misconfiguration
++            url: https://top10.owasp.org/2025/A02_2025-Security_Misconfiguration/
++            cwes: [5, 11, 13, 15, 16, 260, 315, 489, 526, 547, 611, 614, 776, 942, 1004, 1174]
++          A03:
++            name: Software Supply Chain Failures
++            url: https://top10.owasp.org/2025/A03_2025-Software_Supply_Chain_Failures/
++            cwes: [447, 1035, 1104, 1329, 1357, 1395]
++          A04:
++            name: Cryptographic Failures
++            url: https://top10.owasp.org/2025/A04_2025-Cryptographic_Failures/
++            cwes: [261, 296, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 334, 335, 336,
++                   337, 338, 340, 342, 347, 523, 757, 759, 760, 780, 916, 1240, 1241]
++          A05:
++            name: Injection
++            url: https://top10.owasp.org/2025/A05_2025-Injection/
++            cwes: [20, 74, 76, 77, 78, 79, 80, 83, 86, 88, 89, 90, 91, 93, 94, 95, 96, 97, 98, 99, 103, 104, 112,
++                   113, 114, 115, 116, 129, 159, 470, 493, 500, 564, 610, 643, 644, 917]
++          A06:
++            name: Insecure Design
++            url: https://top10.owasp.org/2025/A06_2025-Insecure_Design/
++            cwes: [73, 183, 256, 266, 269, 286, 311, 312, 313, 316, 362, 382, 419, 434, 436, 444, 451, 454, 472,
++                   501, 522, 525, 539, 598, 602, 628, 642, 646, 653, 656, 657, 676, 693, 799, 807, 841, 1021, 1022,
++                   1125]
++          A07:
++            name: Authentication Failures
++            url: https://top10.owasp.org/2025/A07_2025-Authentication_Failures/
++            cwes: [258, 259, 287, 288, 289, 290, 291, 293, 294, 295, 297, 298, 299, 300, 302, 303, 304, 305, 306,
++                   307, 308, 309, 346, 350, 384, 521, 613, 620, 640, 798, 940, 941, 1390, 1391, 1392, 1393]
++          A08:
++            name: Software or Data Integrity Failures
++            url: https://top10.owasp.org/2025/A08_2025-Software_or_Data_Integrity_Failures/
++            cwes: [345, 353, 426, 427, 494, 502, 506, 509, 565, 784, 829, 830, 915, 926]
++          A09:
++            name: Security Logging and Alerting Failures
++            url: https://top10.owasp.org/2025/A09_2025-Security_Logging_and_Alerting_Failures/
++            cwes: [117, 221, 223, 532, 778]
++          A10:
++            name: Mishandling of Exceptional Conditions
++            url: https://top10.owasp.org/2025/A10_2025-Mishandling_of_Exceptional_Conditions/
++            cwes: [209, 215, 234, 235, 248, 252, 274, 280, 369, 390, 391, 394, 396, 397, 460, 476, 478, 484, 550,
++                   636, 703, 754, 755, 756]
++      "2021":
++        status: historical
++        title: OWASP Top 10:2021
++        source_url: https://top10.owasp.org/2021/
++        verified_on: "2026-09-30"
++        categories:
++          A01:
++            name: Broken Access Control
++            url: https://top10.owasp.org/2021/A01_2021-Broken_Access_Control/
++            cwes: [22, 23, 35, 59, 200, 201, 219, 264, 275, 276, 284, 285, 352, 359, 377, 402, 425, 441, 497, 538,
++                   540, 548, 552, 566, 601, 639, 651, 668, 706, 862, 863, 913, 922, 1275]
++          A02:
++            name: Cryptographic Failures
++            url: https://top10.owasp.org/2021/A02_2021-Cryptographic_Failures/
++            cwes: [259, 261, 296, 310, 319, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330, 331, 335, 336, 337,
++                   338, 340, 347, 523, 720, 757, 759, 760, 780, 818, 916]
++          A03:
++            name: Injection
++            url: https://top10.owasp.org/2021/A03_2021-Injection/
++            cwes: [20, 74, 75, 77, 78, 79, 80, 83, 87, 88, 89, 90, 91, 93, 94, 95, 96, 97, 98, 99, 100, 113, 116,
++                   138, 184, 470, 471, 564, 610, 643, 644, 652, 917]
++          A04:
++            name: Insecure Design
++            url: https://top10.owasp.org/2021/A04_2021-Insecure_Design/
++            cwes: [73, 183, 209, 213, 235, 256, 257, 266, 269, 280, 311, 312, 313, 316, 419, 430, 434, 444, 451,
++                   472, 501, 522, 525, 539, 579, 598, 602, 642, 646, 650, 653, 656, 657, 799, 807, 840, 841, 927,
++                   1021, 1173]
++          A05:
++            name: Security Misconfiguration
++            url: https://top10.owasp.org/2021/A05_2021-Security_Misconfiguration/
++            cwes: [2, 11, 13, 15, 16, 260, 315, 520, 526, 537, 541, 547, 611, 614, 756, 776, 942, 1004, 1032, 1174]
++          A06:
++            name: Vulnerable and Outdated Components
++            url: https://top10.owasp.org/2021/A06_2021-Vulnerable_and_Outdated_Components/
++            cwes: [937, 1035, 1104]
++          A07:
++            name: Identification and Authentication Failures
++            url: https://top10.owasp.org/2021/A07_2021-Identification_and_Authentication_Failures/
++            cwes: [255, 259, 287, 288, 290, 294, 295, 297, 300, 302, 304, 306, 307, 346, 384, 521, 613, 620, 640,
++                   798, 940, 1216]
++          A08:
++            name: Software and Data Integrity Failures
++            url: https://top10.owasp.org/2021/A08_2021-Software_and_Data_Integrity_Failures/
++            cwes: [345, 353, 426, 494, 502, 565, 784, 829, 830, 915]
++          A09:
++            name: Security Logging and Monitoring Failures
++            url: https://top10.owasp.org/2021/A09_2021-Security_Logging_and_Monitoring_Failures/
++            cwes: [117, 223, 532, 778]
++          A10:
++            name: Server-Side Request Forgery (SSRF)
++            url: https://top10.owasp.org/2021/A10_2021-Server-Side_Request_Forgery_%28SSRF%29/
++            cwes: [918]
++
++  owasp_api:
++    name: OWASP API Security Top 10
++    publisher: OWASP Foundation
++    editions:
++      "2023":
++        status: current
++        title: OWASP API Security Top 10:2023
++        source_url: https://owasp.org/API-Security/editions/2023/en/0x11-t10/
++        verified_on: "2026-09-30"
++        note: No newer edition was published at the verification date.
++        categories:
++          API1:
++            name: Broken Object Level Authorization
++            url: https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/
++          API2:
++            name: Broken Authentication
++            url: https://owasp.org/API-Security/editions/2023/en/0xa2-broken-authentication/
++          API3:
++            name: Broken Object Property Level Authorization
++            url: https://owasp.org/API-Security/editions/2023/en/0xa3-broken-object-property-level-authorization/
++          API4:
++            name: Unrestricted Resource Consumption
++            url: https://owasp.org/API-Security/editions/2023/en/0xa4-unrestricted-resource-consumption/
++          API5:
++            name: Broken Function Level Authorization
++            url: https://owasp.org/API-Security/editions/2023/en/0xa5-broken-function-level-authorization/
++          API6:
++            name: Unrestricted Access to Sensitive Business Flows
++            url: https://owasp.org/API-Security/editions/2023/en/0xa6-unrestricted-access-to-sensitive-business-flows/
++          API7:
++            name: Server Side Request Forgery
++            url: https://owasp.org/API-Security/editions/2023/en/0xa7-server-side-request-forgery/
++          API8:
++            name: Security Misconfiguration
++            url: https://owasp.org/API-Security/editions/2023/en/0xa8-security-misconfiguration/
++          API9:
++            name: Improper Inventory Management
++            url: https://owasp.org/API-Security/editions/2023/en/0xa9-improper-inventory-management/
++          API10:
++            name: Unsafe Consumption of APIs
++            url: https://owasp.org/API-Security/editions/2023/en/0xaa-unsafe-consumption-of-apis/
++
++  owasp_llm:
++    name: OWASP Top 10 for LLM Applications
++    publisher: OWASP GenAI Security Project
++    editions:
++      "2026":
++        status: current
++        title: OWASP Top 10 for LLM Applications 2026
++        source_url: https://genai.owasp.org/resource/owasp-genai-llm-top-10-2026/
++        verified_on: "2026-09-30"
++        license: CC BY-SA 4.0
++        note: >-
++          Version 2026, published 4 August 2026. Category names and the 2025 lineage are taken from the
++          document's table of contents and "What's New" table.
++        categories:
++          LLM01: {name: Prompt Injection, previous: {"2025": LLM01}}
++          LLM02: {name: Sensitive Information Disclosure, previous: {"2025": LLM02}}
++          LLM03: {name: Excessive Agency, previous: {"2025": LLM06}}
++          LLM04: {name: Supply Chain, previous: {"2025": LLM03}}
++          LLM05: {name: Data and Model Poisoning, previous: {"2025": LLM04}}
++          LLM06: {name: Unbounded Consumption, previous: {"2025": LLM10}}
++          LLM07: {name: Misinformation, previous: {"2025": LLM09}}
++          LLM08:
++            name: Hidden Context Exposure
++            previous: {"2025": LLM07}
++            note: Renamed and re-scoped from LLM07:2025 System Prompt Leakage.
++          LLM09: {name: Vector and Embedding Weaknesses, previous: {"2025": LLM08}}
++          LLM10: {name: Improper Output Handling, previous: {"2025": LLM05}}
++      "2025":
++        status: historical
++        title: OWASP Top 10 for LLM Applications 2025
++        source_url: https://genai.owasp.org/llm-top-10/
++        verified_on: "2026-09-30"
++        license: CC BY-SA 4.0
++        categories:
++          LLM01: {name: Prompt Injection}
++          LLM02: {name: Sensitive Information Disclosure}
++          LLM03: {name: Supply Chain}
++          LLM04: {name: Data and Model Poisoning}
++          LLM05: {name: Improper Output Handling}
++          LLM06: {name: Excessive Agency}
++          LLM07: {name: System Prompt Leakage}
++          LLM08: {name: Vector and Embedding Weaknesses}
++          LLM09: {name: Misinformation}
++          LLM10: {name: Unbounded Consumption}
++
++# CWE is the reference taxonomy for individual weaknesses. The parent links used
++# by curated mappings (catalog `top10_parent_cwe`) were checked on the CWE site
++# (CWE 4.20, Research Concepts view) on the date below.
++cwe:
++  version: "4.20"
++  verified_on: "2026-09-30"
++  definition_url: https://cwe.mitre.org/data/definitions/{number}.html
++  parents:
++    943: 74    # Improper Neutralization of Special Elements in Data Query Logic → Injection
++    1336: 94   # Template engine special elements → Code Injection
++    1321: 915  # Prototype Pollution → Dynamically-Determined Object Attributes
++    134: 668   # Externally-Controlled Format String → Exposure of Resource to Wrong Sphere (not used for mapping)
