@@ -12,7 +12,16 @@ cd securelens-ai
 scripts/setup-local.sh        # once: venv, packages, private .env.local, database
 scripts/run-local.sh          # API :8000, scan worker, dashboard http://localhost:5173
 scripts/run-local.sh --test   # every test suite
+scripts/demo.sh               # record a narrated walkthrough (video + screenshots) into docs/demo
+scripts/install-git-hooks.sh  # optional: push automatically after every commit
 ```
+
+Automation already in place:
+
+* **GitHub Actions** (`.github/workflows/ci.yml`) runs the backend lint and tests and the dashboard typecheck,
+  unit tests, build and end-to-end tests on every push and pull request.
+* **Automatic push** (opt-in, per clone): `scripts/install-git-hooks.sh` installs a post-commit hook that
+  pushes each commit to the branch's upstream (never force-pushes). `--uninstall` turns it off.
 
 The sections below explain each step.
 

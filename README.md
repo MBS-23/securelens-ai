@@ -41,6 +41,10 @@ scripts/setup-local.sh      # once (macOS, Linux, or Windows via WSL2)
 scripts/run-local.sh        # dashboard at http://localhost:5173
 ```
 
+More: `scripts/run-local.sh --test` (all tests) · `scripts/demo.sh` (record a walkthrough) ·
+`scripts/install-git-hooks.sh` (auto-push after each commit). CI runs on every push. A real recording of the
+platform is in `docs/demo/`.
+
 ## Running it locally (manual steps)
 
 Requirements: Python 3.11+, Node 20.19+ (dashboard), PostgreSQL 16 for a server deployment (SQLite works for

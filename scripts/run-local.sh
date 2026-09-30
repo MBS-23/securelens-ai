@@ -22,7 +22,7 @@ trap cleanup EXIT INT TERM
 
 (cd "$ROOT/backend" && exec "$PY" -m uvicorn securelens.main:app --host 127.0.0.1 --port 8000) & pids+=($!)
 (cd "$ROOT/backend" && exec "$PY" -m securelens.worker) & pids+=($!)
-(cd "$ROOT/frontend" && SECURELENS_API_URL=http://127.0.0.1:8000 exec npx vite --host 127.0.0.1 --port 5173) & pids+=($!)
+(cd "$ROOT/frontend" && SECURELENS_API_URL=http://127.0.0.1:8000 exec ./node_modules/.bin/vite --host 127.0.0.1 --port 5173) & pids+=($!)
 
 echo
 echo "SecureLens AI is starting:"

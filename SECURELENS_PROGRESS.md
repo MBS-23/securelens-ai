@@ -9,10 +9,13 @@ Where the cloud session stopped (credits ending); continue locally with `LOCAL_D
 1. `git apply wip/taxonomy-evidence-wip.patch` — the unfinished Phase 1 correctness work (versioned OWASP taxonomy
    from official CWE lists, evidence classes, limitations, LEARNER role, INCONCLUSIVE). Finish what §3 lists, run
    `scripts/run-local.sh --test`, commit, delete `wip/`.
-2. Phase 1 remainder: CI workflow for this repository (backend pytest + ruff, frontend typecheck/unit/E2E, build),
-   upgrade vitest to 5 (dev-only advisory GHSA-82fw-gwwq-j7x9), set the tool version to 0.x.
+2. Phase 1 remainder: check the first GitHub Actions run (`.github/workflows/ci.yml`, added 2026-09-30) and fix
+   anything red; upgrade vitest to 5 (dev-only advisory GHSA-82fw-gwwq-j7x9); set the tool version to 0.x.
 3. Phase 2 — authentication (§1 roadmap): registration with personal workspace, LEARNER, invitations, password
    reset, email verification, TOTP MFA, Alembic `0002`, UI (onboarding = mockup screen 2).
+
+Automation: `scripts/setup-local.sh`, `scripts/run-local.sh [--test]`, `scripts/demo.sh` (records
+`docs/demo/`), `scripts/install-git-hooks.sh` (opt-in auto-push), CI on every push.
 
 Everything else below is the record: audit, decisions, schema, API contracts, tests.
 
