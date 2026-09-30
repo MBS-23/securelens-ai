@@ -48,7 +48,9 @@ class Account:
 @pytest.fixture()
 def settings_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv("SECURELENS_ENVIRONMENT", "test")
-    monkeypatch.setenv("SECURELENS_DATABASE_URL", f"sqlite:///{tmp_path / 'test.db'}")
+    # SECURELENS_TEST_DATABASE_URL runs the suite against PostgreSQL (the schema is recreated per test).
+    monkeypatch.setenv("SECURELENS_DATABASE_URL",
+                       os.environ.get("SECURELENS_TEST_DATABASE_URL") or f"sqlite:///{tmp_path / 'test.db'}")
     monkeypatch.setenv("SECURELENS_STORAGE_DIR", str(tmp_path / "storage"))
     monkeypatch.setenv("SECURELENS_SECRET_KEY", "test-secret-key-" + "x" * 40)
     monkeypatch.setenv("SECURELENS_OSV_ENABLED", "false")
@@ -71,7 +73,10 @@ def app(settings_env: Path):
     from securelens.models import Base
 
     database.configure()
-    Base.metadata.create_all(database.get_engine())
+    engine = database.get_engine()
+    if engine.dialect.name != "sqlite":
+        Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
     application = create_app()
     yield application
     database.get_engine().dispose()

@@ -49,20 +49,20 @@ FREE_CALLEES = frozenset({"free", "cfree", "g_free", "kfree", "delete", "delete[
 STRING_TRANSFORMS = frozenset({
     "[]byte", "string", "[]rune", "String.valueOf", "valueOf", "toCharArray", "getBytes", "ToString", "Trim",
     "Sprintf", "Sprint", "Sprintln", "Format", "formatted", "Errorf", "snprintf", "sprintf",
-    "ToLower", "ToUpper", "Substring", "Replace", "Split", "Join", "Format", "Concat", "c_str", "data", "substr",
-    "append", "Sprint", "Sprintln", "strings.TrimSpace", "TrimSpace", "strings.ToLower", "ToLower", "Trim",
-    "str", "String", "repr", "format", "sprintf", "vsprintf", "format_map", "join", "concat", "strip", "lstrip",
+    "ToLower", "ToUpper", "Substring", "Replace", "Split", "Join", "Concat", "c_str", "data", "substr",
+    "append", "strings.TrimSpace", "TrimSpace", "strings.ToLower", "str", "String", "repr", "format", "vsprintf",
+    "format_map", "join", "concat", "strip", "lstrip",
     "rstrip", "trim", "trimStart", "trimEnd", "lower", "upper", "toLowerCase", "toUpperCase", "casefold", "title",
-    "capitalize", "replace", "replaceAll", "split", "rsplit", "splitlines", "slice", "substring", "substr",
-    "encode", "decode", "toString", "valueOf", "padStart", "padEnd", "normalize", "get", "getlist", "pop",
+    "capitalize", "replace", "replaceAll", "split", "rsplit", "splitlines", "slice", "substring", "encode", "decode",
+    "toString", "padStart", "padEnd", "normalize", "get", "getlist", "pop",
     "decodeURIComponent", "decodeURI", "unescape", "atob", "btoa", "fromCharCode", "stringify", "dumps", "loads",
     "parse", "JSON.parse", "JSON.stringify", "json", "text", "read", "readline", "strtolower", "strtoupper",
-    "trim", "ltrim", "rtrim", "substr", "str_replace", "implode", "explode", "urldecode", "rawurldecode",
-    "base64_decode", "json_decode", "json_encode", "sprintf", "vsprintf", "nl2br", "ucfirst", "join", "path.join",
-    "join", "resolve", "normpath", "abspath", "realpath", "expanduser", "urljoin", "URL", "Buffer.from", "from",
+    "ltrim", "rtrim", "str_replace", "implode", "explode", "urldecode", "rawurldecode",
+    "base64_decode", "json_decode", "json_encode", "nl2br", "ucfirst", "path.join",
+    "resolve", "normpath", "abspath", "realpath", "expanduser", "urljoin", "URL", "Buffer.from", "from",
     "values", "items", "keys", "copy", "dict", "list", "tuple", "set", "sorted", "reversed", "Array.from", "map",
     "filter", "find", "first", "last", "at", "array_merge", "array_values", "array_map", "iter", "next",
-    "URLSearchParams", "URL", "querystring.parse", "qs.parse", "parse_qs", "parse_qsl", "urlparse", "urlsplit",
+    "URLSearchParams", "querystring.parse", "qs.parse", "parse_qs", "parse_qsl", "urlparse", "urlsplit",
     "Markup", "escape_string",
 })
 TRUSTED_SOURCE_KINDS_HIGH = frozenset({"http", "llm_output", "llm_tool_input", "retrieval"})
@@ -76,6 +76,42 @@ SAFE_SCALAR_TYPES = frozenset({"int", "float", "bool", "uuid", "uuid.uuid", "dat
                                "positiveint", "nonnegativeint", "conint", "strictint", "strictbool", "number",
                                "boolean", "bigint"})
 _FLASK_CONVERTER = re.compile(r"<(int|float|uuid|path|string|any)(?:\([^)]*\))?:(\w+)>")
+
+# Allow-list guards — `if x not in ALLOWED: raise`, `if (!ALLOWED.includes(x)) return`,
+# `if (!in_array($x, $allowed, true)) exit;` — make x one of a fixed set of constants
+# on the path that continues, which is safe for every injection class.
+EXIT_CALLEES = frozenset({
+    "sys.exit", "os._exit", "os.Exit", "flask.abort", "werkzeug.exceptions.abort", "django.http.Http404",
+    "log.Fatal", "log.Fatalf", "log.Fatalln", "log.Panic", "log.Panicf", "System.exit", "Environment.Exit",
+    "process.exit",
+})
+EXIT_BARE_NAMES = frozenset({"abort", "exit", "die", "panic", "quit"})
+MEMBERSHIP_METHODS = frozenset({"includes", "has", "contains", "Contains", "containsKey", "ContainsKey",
+                                "__contains__"})
+# function name -> (index of the tested value, index of the collection)
+MEMBERSHIP_FUNCTIONS = {"in_array": (0, 1), "array_key_exists": (0, 1), "slices.Contains": (1, 0)}
+COLLECTION_CONSTRUCTORS = frozenset({"set", "frozenset", "tuple", "list", "Set", "of", "asList", "HashSet",
+                                     "copyOf", "unmodifiableSet", "unmodifiableList"})
+COLLECTION_MUTATORS = frozenset({"append", "add", "extend", "insert", "update", "push", "unshift", "put", "putAll",
+                                 "Add", "AddRange", "Insert", "setdefault", "addAll", "splice", "set"})
+
+
+def _constant_items(items: list) -> bool:
+    return bool(items) and all(isinstance(i, ir.Str | ir.Const) for i in items)
+
+
+def literal_collection_expr(expr: ir.Expr | None) -> bool:
+    """A collection written out as constants: ``["a", "b"]``, ``{"a": 1}``, ``frozenset({"a"})``,
+    ``Set.of("a", "b")``, ``new Set(["a"])``."""
+    if isinstance(expr, ir.ListLit):
+        return _constant_items(expr.items)
+    if isinstance(expr, ir.DictLit):
+        return _constant_items(expr.keys)
+    if isinstance(expr, ir.Call):
+        name = (ir.qualname(expr.func) or "").rsplit(".", 1)[-1]
+        if name in COLLECTION_CONSTRUCTORS:
+            return _constant_items(expr.args) or (len(expr.args) == 1 and literal_collection_expr(expr.args[0]))
+    return False
 
 
 # --------------------------------------------------------------------------
@@ -120,7 +156,7 @@ class Taint:
     def with_step(self, step: Step) -> Taint:
         if self.steps and self.steps[-1] == step:
             return self
-        return replace(self, steps=_cap_steps(self.steps + (step,)))
+        return replace(self, steps=_cap_steps((*self.steps, step)))
 
     def sanitize(self, classes: frozenset[str]) -> Taint:
         return replace(self, sanitized=self.sanitized | classes)
@@ -217,6 +253,7 @@ class RawFinding:
     source_kind: str | None = None
     language: str = ""
     base_class: str = ""  # the sink's own class when vuln_class was remapped (e.g. LLM output -> SQL sink)
+    origin_unknown: bool = False  # dangerous sink fed by a dynamic value whose source could not be traced
 
     def key(self) -> tuple:
         return (self.rule_id, self.path, self.line, self.col, self.vuln_class)
@@ -273,6 +310,51 @@ class TaintEngine:
         self._php_methods: dict[str, ir.Function] = {}
         self._module_consts: dict[int, dict[str, Val]] = {}
         self._func_module: dict[int, ir.Module] = {}
+        self._collections: dict[tuple[int, int], dict[str, bool]] = {}
+
+    def literal_collections(self, module: ir.Module, func: ir.Function) -> dict[str, bool]:
+        """Names bound only to constant collections (and never mutated) in scope of ``func``.
+
+        Looks at module-level statements, the function's own body and field
+        initialisers (``this.X`` / ``self.X``) anywhere in the module. One
+        non-constant assignment or mutating call disqualifies the name.
+        """
+        key = (id(module), id(func))
+        table = self._collections.get(key)
+        if table is not None:
+            return table
+        table = {}
+
+        def note(name: str | None, ok: bool) -> None:
+            if not name:
+                return
+            table[name] = table.get(name, True) and ok
+            if name.startswith(("this.", "self.")):
+                short = name.split(".", 1)[1]
+                table[short] = table.get(short, True) and ok
+
+        bodies = [module.toplevel.body] + ([func.body] if func is not module.toplevel else [])
+        field_bodies = [f.body for f in module.functions if f is not func]
+        for body, fields_only in [(b, False) for b in bodies] + [(b, True) for b in field_bodies]:
+            for stmt in ir.walk_stmts(body):
+                if isinstance(stmt, ir.Assign):
+                    for target in stmt.targets:
+                        name = ir.qualname(target)
+                        if fields_only and not (name or "").startswith(("this.", "self.")):
+                            continue
+                        if isinstance(target, ir.Subscript):
+                            note(ir.qualname(target.value), False)
+                        else:
+                            note(name, not stmt.augmented and literal_collection_expr(stmt.value))
+                if fields_only:
+                    continue
+                for expr in ir.stmt_exprs(stmt):
+                    for node in ir.walk_exprs(expr):
+                        if (isinstance(node, ir.Call) and isinstance(node.func, ir.Attr)
+                                and node.func.attr in COLLECTION_MUTATORS):
+                            note(ir.qualname(node.func.value), False)
+        self._collections[key] = table
+        return table
 
     # ------------------------------------------------------------------ run
 
@@ -360,7 +442,7 @@ class TaintEngine:
                 continue
             for func in module.functions:
                 for rule in pack.entry_points:
-                    if rule.names and func.name in rule.names and not func.class_name or (
+                    if (rule.names and func.name in rule.names and not func.class_name) or (
                             rule.names and func.name in rule.names and module.language in {"java", "csharp"}):
                         self.entries[id(func)] = (rule, func.name)
                         func.entry_kind, func.entry_detail = rule.kind, func.name
@@ -399,7 +481,8 @@ class TaintEngine:
                 path_like = isinstance(first, ir.Str) and (first.value.startswith("/") or not rule.require_path_slash)
                 if not path_like:
                     continue
-                candidates = call.args[1:] if rule.handler_arg is None else call.args[rule.handler_arg:rule.handler_arg + 1]
+                start = rule.handler_arg
+                candidates = call.args[1:] if start is None else call.args[start:start + 1]
             else:
                 candidates = list(call.args)
                 for arg in call.args:
@@ -564,7 +647,7 @@ class _FunctionContext:
         for param in self.func.params:
             if param.name in {"self", "cls", "this", "$this"}:
                 continue
-            if entry is not None and self.mode == "report" or (entry is not None and self.parent is not None):
+            if (entry is not None and self.mode == "report") or (entry is not None and self.parent is not None):
                 rule, detail = entry
                 annotation = param.annotation or ""
                 if param.name in rule.exclude_params or (annotation and rule.exclude_annotations.matches(
@@ -633,12 +716,23 @@ class _FunctionContext:
             self.ret = join_vals(self.ret, value)
         elif isinstance(stmt, ir.If):
             self.eval(stmt.test)
+            guard = self._allowlist_guard(stmt.test)
             before = dict(self.env)
+            if guard is not None and guard[1]:
+                self._mark_allowlisted(guard[0], stmt.line)
             self.block(stmt.body)
             after_body = self.env
             self.env = dict(before)
+            if guard is not None and not guard[1]:
+                self._mark_allowlisted(guard[0], stmt.line)
             self.block(stmt.orelse)
-            self.env = join_envs(after_body, self.env)
+            body_exits, else_exits = self._exits(stmt.body), self._exits(stmt.orelse)
+            if body_exits and not else_exits:
+                pass  # only the else path reaches the code after the if
+            elif else_exits and not body_exits:
+                self.env = after_body
+            else:
+                self.env = join_envs(after_body, self.env)
         elif isinstance(stmt, ir.Loop):
             before = dict(self.env)
             self.block(stmt.header)
@@ -659,6 +753,74 @@ class _FunctionContext:
         elif isinstance(stmt, ir.FunctionDef) and stmt.func is not None:
             self.env[stmt.func.name] = Val(func=stmt.func)
             self.nested(stmt.func)
+
+    # ------------------------------------------------------------- guards
+
+    def _exits(self, stmts: list[ir.Stmt]) -> bool:
+        """True when a block always leaves the function (return, raise/throw, exit(), abort())."""
+        if not stmts:
+            return False
+        last = stmts[-1]
+        if isinstance(last, ir.Return):
+            return True
+        if isinstance(last, ir.ExprStmt):
+            if last.exits:
+                return True
+            if isinstance(last.expr, ir.Call) and last.expr.func is not None:
+                if isinstance(last.expr.func, ir.Name) and last.expr.func.id in EXIT_BARE_NAMES:
+                    return True
+                return (ir.qualname(last.expr.func, self.module.imports) or "") in EXIT_CALLEES
+        if isinstance(last, ir.If):
+            return self._exits(last.body) and self._exits(last.orelse)
+        return False
+
+    def _allowlist_guard(self, test: ir.Expr | None) -> tuple[str, bool] | None:
+        """``(name, positive)`` when ``test`` checks a variable against a constant collection.
+
+        ``positive`` is True when the test holds for allowed values (``x in ALLOWED``)
+        and False when it holds for disallowed ones (``x not in ALLOWED``).
+        """
+        positive = True
+        while isinstance(test, ir.Other) and test.kind == "not" and len(test.children) == 1:
+            positive, test = not positive, test.children[0]
+        subject: ir.Expr | None
+        collection: ir.Expr | None
+        if isinstance(test, ir.Compare) and len(test.ops) == 1 and test.ops[0] in ("In", "NotIn"):
+            subject, collection = test.left, test.comparators[0]
+            if test.ops[0] == "NotIn":
+                positive = not positive
+        elif isinstance(test, ir.Call) and test.func is not None:
+            name = ir.qualname(test.func, self.module.imports) or ""
+            spec = MEMBERSHIP_FUNCTIONS.get(name) or MEMBERSHIP_FUNCTIONS.get(name.rsplit(".", 1)[-1])
+            if spec is not None:  # in_array($x, $allowed), slices.Contains(allowed, x)
+                if len(test.args) <= max(spec):
+                    return None
+                subject, collection = test.args[spec[0]], test.args[spec[1]]
+            elif isinstance(test.func, ir.Attr) and test.func.attr in MEMBERSHIP_METHODS and len(test.args) == 1:
+                subject, collection = test.args[0], test.func.value  # ALLOWED.includes(x)
+            else:
+                return None
+        else:
+            return None
+        subject_name = ir.qualname(subject) if isinstance(subject, ir.Name | ir.Attr) else None
+        if not subject_name or not self._is_constant_collection(collection):
+            return None
+        return subject_name, positive
+
+    def _is_constant_collection(self, expr: ir.Expr | None) -> bool:
+        if literal_collection_expr(expr):
+            return True
+        if isinstance(expr, ir.Name | ir.Attr):
+            name = ir.qualname(expr)
+            return bool(name) and self.engine.literal_collections(self.module, self.owner).get(name, False)
+        return False
+
+    def _mark_allowlisted(self, name: str, line: int) -> None:
+        current = self.lookup(name) or CLEAN
+        step = Step(self.module.path, line, f"{name.lstrip('$')} checked against an allow-list of constants")
+        taint = (current.taint.sanitize(frozenset({"*"})).with_step(step) if current.taint is not None
+                 else Taint(sanitized=frozenset({"*"}), steps=(step,)))
+        self.env[name] = Val(taint=taint, const=current.const, origin=current.origin, scalar=current.scalar)
 
     def assign(self, target: ir.Expr, value: Val, stmt: ir.Assign) -> None:
         if self.pack.memory_model and isinstance(target, ir.Attr | ir.Subscript):
@@ -799,7 +961,7 @@ class _FunctionContext:
             else:
                 arg_vals.append(self.eval(arg))
         kw_vals = {k: self.eval(v) for k, v in call.kwargs.items() if not isinstance(v, ir.FuncExpr)}
-        for k, v in call.kwargs.items():
+        for v in call.kwargs.values():
             if isinstance(v, ir.FuncExpr) and v.func is not None:
                 func_args.append((-1, v.func))
 
@@ -934,7 +1096,7 @@ class _FunctionContext:
             if merged.params:
                 new_hit = SinkHit(rule=hit.rule, params=merged.params, path=hit.path, line=hit.line, col=hit.col,
                                   end_line=hit.end_line, function=hit.function, snippet=hit.snippet, sink=hit.sink,
-                                  steps=_cap_steps(merged.steps + (call_step,) + hit.steps),
+                                  steps=_cap_steps((*merged.steps, call_step, *hit.steps)),
                                   sanitized=merged.sanitized)
                 if all(h.signature() != new_hit.signature() for h in self.summary.sink_hits):
                     self.summary.sink_hits.append(new_hit)
@@ -973,11 +1135,10 @@ class _FunctionContext:
     def sanitizer_classes(self, callees: tuple[str, ...], call: ir.Call | None = None) -> set[str]:
         classes: set[str] = set()
         for rule in self.pack.sanitizers:
-            if rule.arg_names:
-                if call is None or not all(
-                        i < len(call.args) and (ir.qualname(call.args[i]) or ir.string_value(call.args[i]) or "")
-                        in names for i, names in rule.arg_names.items()):
-                    continue
+            if rule.arg_names and (call is None or not all(
+                    i < len(call.args) and (ir.qualname(call.args[i]) or ir.string_value(call.args[i]) or "")
+                    in names for i, names in rule.arg_names.items())):
+                continue
             if any(rule.patterns.matches(c) for c in callees):
                 classes |= rule.classes
         return classes
@@ -1119,7 +1280,8 @@ class _FunctionContext:
                 for target in stmt.targets:
                     name = ir.qualname(target)
                     root = name.split(".")[0].split("[")[0] if name else None
-                    if root and stmt.value is not None and isinstance(stmt.value, ir.Other) and stmt.value.kind == "decl":
+                    decl = isinstance(stmt.value, ir.Other) and stmt.value.kind == "decl"
+                    if root and decl:
                         local.add(root)
                     elif root and root not in local and root in self.env:
                         writes.append((root, stmt.line))
@@ -1207,7 +1369,7 @@ class _FunctionContext:
             hit = SinkHit(rule=sink, params=taint.params, path=self.module.path, line=node.line, col=node.col,
                           end_line=node.end_line or node.line, function=self.owner.qualname,
                           snippet=self._line_text(node.line), sink=desc,
-                          steps=_cap_steps(taint.steps + (Step(self.module.path, node.line, f"reaches {desc}"),)),
+                          steps=_cap_steps((*taint.steps, Step(self.module.path, node.line, f"reaches {desc}"))),
                           sanitized=taint.sanitized)
             if all(h.signature() != hit.signature() for h in self.summary.sink_hits):
                 self.summary.sink_hits.append(hit)
@@ -1230,6 +1392,7 @@ class _FunctionContext:
             exploitability=Exploitability.POSSIBLE, path=self.module.path, line=node.line, col=node.col,
             end_line=node.end_line or node.line, function=self.owner.qualname, snippet=self._line_text(node.line),
             kind="taint", sink=desc, steps=steps, cwe=sink.cwe, language=self.module.language,
+            origin_unknown=True,
         ))
 
     def _report_taint(self, rule: SinkRule, taint: Taint, *, path: str, line: int, col: int,
@@ -1440,9 +1603,9 @@ def _callee_variants(*names: str) -> tuple[str, ...]:
 def _binop_nonconst(expr: ir.Expr, ops: list[str]) -> bool:
     """True for ``a * b`` style arithmetic (with at least one non-constant operand)."""
     for node in ir.walk_exprs(expr):
-        if isinstance(node, ir.Other) and node.kind.startswith("binop:") and node.kind[6:] in ops:
-            if any(not isinstance(c, ir.Const | ir.Str) for c in node.children):
-                return True
+        if (isinstance(node, ir.Other) and node.kind.startswith("binop:") and node.kind[6:] in ops
+                and any(not isinstance(c, ir.Const | ir.Str) for c in node.children)):
+            return True
     return False
 
 

@@ -1,0 +1,103 @@
+"""Markdown output: pull-request comments, CI job summaries and plain-text reports.
+
+File paths, titles and snippets come from scanned (untrusted) repositories, so
+everything interpolated into Markdown is escaped: table cells cannot break out
+of the table, and HTML or links cannot be injected into a PR comment.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Any
+
+_MD_SPECIAL = re.compile(r"([\\`*_\[\]|<>~])")
+_BLOCK_START = re.compile(r"^(#|-|\+|=|\d+[.)])")
+_ICON = {"CRITICAL": "🟥", "HIGH": "🟧", "MEDIUM": "🟨", "LOW": "🟦", "INFO": "⬜"}
+
+
+def esc(text: Any) -> str:
+    value = str(text if text is not None else "")
+    value = _MD_SPECIAL.sub(r"\\\1", value.replace("\r", " ").replace("\n", " "))
+    # Characters that only matter at the start of a line (headings, lists, rules).
+    return "\\" + value if _BLOCK_START.match(value) else value
+
+
+def code(text: Any, *, in_table: bool = False) -> str:
+    """Inline code span that survives backticks inside the text.
+
+    In a GFM table a ``|`` ends the cell even inside a code span, so it is
+    escaped there (GitHub renders ``\\|`` in a table code span as ``|``).
+    """
+    value = str(text if text is not None else "").replace("\r", " ").replace("\n", " ").strip()
+    if not value:
+        return ""
+    if in_table:
+        value = value.replace("|", "\\|")
+    longest = max((len(m) for m in re.findall(r"`+", value)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if value.startswith("`") or value.endswith("`") else ""
+    return f"{fence}{pad}{value}{pad}{fence}"
+
+
+def _gate_line(gate: dict[str, Any] | None) -> str:
+    if not gate:
+        return ""
+    if gate.get("status") == "PASS":
+        return "**Security gate:** ✅ PASS"
+    reasons = "; ".join(esc(r) for r in gate.get("reasons", [])) or "policy violated"
+    return f"**Security gate:** ❌ FAIL — {reasons}"
+
+
+def render(ctx: dict[str, Any], *, max_findings: int = 25, heading_level: int = 2) -> str:
+    h = "#" * heading_level
+    meta, summary, scope = ctx["meta"], ctx["summary"], ctx["scope"]
+    lines: list[str] = [f"{h} {esc(meta['title'])}", ""]
+    gate = _gate_line(ctx.get("gate"))
+    if gate:
+        lines += [gate, ""]
+    risk = ctx.get("risk")
+    if risk and risk.get("index") is not None:
+        lines += [f"**SecureLens Risk Index:** {risk['index']} / 100 _(SecureLens-specific prioritisation aid, "
+                  "not CVSS)_", ""]
+    sev = summary["by_severity"]
+    lines += ["| Critical | High | Medium | Low | Info | Total |", "|---:|---:|---:|---:|---:|---:|",
+              f"| {sev['CRITICAL']} | {sev['HIGH']} | {sev['MEDIUM']} | {sev['LOW']} | {sev['INFO']} | "
+              f"{summary['total']} |", ""]
+    retest = ctx.get("retest")
+    if retest:
+        lines += [f"{h}# Retest", "",
+                  "| Resolved | Still open | New | Regressions | Not tested | Not reproduced |",
+                  "|---:|---:|---:|---:|---:|---:|",
+                  f"| {retest.get('resolved', 0)} | {retest.get('still_open', 0)} | {retest.get('new', 0)} | "
+                  f"{retest.get('regressions', 0)} | {retest.get('not_tested', 0)} | "
+                  f"{retest.get('not_reproduced', 0)} |", ""]
+    findings = ctx["findings"]
+    if findings:
+        lines += [f"{h}# Findings", "", "| ID | Severity | Finding | Location | Confidence |",
+                  "|---|---|---|---|---|"]
+        for f in findings[:max_findings]:
+            lines.append(f"| {esc(f['id'])} | {_ICON.get(f['severity'], '')} {f['severity']} | {esc(f['title'])} | "
+                         f"{code(f['location'], in_table=True)} | {f['confidence']} |")
+        if len(findings) > max_findings:
+            lines.append(f"\n_…and {len(findings) - max_findings} more. See the full report._")
+        lines.append("")
+    else:
+        lines += ["No findings were reported by the scanners that ran. This is not proof that the code is "
+                  "free of vulnerabilities; see the limitations below.", ""]
+    languages = ", ".join(f"{esc(lang['name'])} ({lang['files']})" for lang in scope["languages"]) or "none"
+    ran = ", ".join(esc(s["label"]) for s in scope["scanners"] if s["status"] == "ran") or "none"
+    lines += ["<details><summary>Scope, methodology and limitations</summary>", "",
+              f"- **Target:** {code(scope['target'])} ({scope['scope'].lower()} scan)",
+              f"- **Files analysed:** {scope['files_analyzed']} of {scope['files_total']}, "
+              f"{scope['lines_analyzed']} lines",
+              f"- **Languages:** {languages}",
+              f"- **Scanners that ran:** {ran}"]
+    if scope.get("commit"):
+        lines.append(f"- **Commit:** {code(scope['commit'])}")
+    lines += ["", "**Methodology**", ""]
+    lines += [f"- **{esc(m['name'])}.** {esc(m['text'])}" for m in ctx["methodology"]]
+    lines += ["", "**Limitations**", ""]
+    lines += [f"- {esc(item)}" for item in ctx["limitations"]]
+    lines += ["", "</details>", "",
+              f"_Generated by {esc(meta['tool'])} {esc(meta['tool_version'])} at {esc(meta['generated_at'])}._"]
+    return "\n".join(lines) + "\n"

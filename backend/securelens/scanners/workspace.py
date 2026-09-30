@@ -131,7 +131,8 @@ def build_inventory(root: Path, options: ScanOptions) -> tuple[list[SourceFile],
                                           detail="nested archive (not extracted)"))
                 continue
             if lower.endswith(BINARY_EXTENSIONS):
-                records.append(FileRecord(path=rel, size_bytes=size, status="SKIPPED_BINARY", detail="binary file type"))
+                records.append(FileRecord(path=rel, size_bytes=size, status="SKIPPED_BINARY",
+                                          detail="binary file type"))
                 continue
             if size > max_bytes:
                 records.append(FileRecord(path=rel, size_bytes=size, status="SKIPPED_SIZE",

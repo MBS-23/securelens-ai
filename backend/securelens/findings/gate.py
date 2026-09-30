@@ -64,7 +64,8 @@ class GateResult:
         }
 
 
-def evaluate(items: list[GateItem], policy: GatePolicy, *, regressions: int = 0, new_blocking: int | None = None) -> GateResult:
+def evaluate(items: list[GateItem], policy: GatePolicy, *, regressions: int = 0,
+             new_blocking: int | None = None) -> GateResult:
     min_conf = CONFIDENCE_ORDER[Confidence(policy.min_confidence)]
     counts = {s.value: 0 for s in Severity}
     blocking: list[GateItem] = []
@@ -81,9 +82,11 @@ def evaluate(items: list[GateItem], policy: GatePolicy, *, regressions: int = 0,
         if n:
             reasons.append(f"{n} {severity} finding{'s' if n != 1 else ''} at confidence ≥ {policy.min_confidence}")
     if policy.fail_on_regression and regressions:
-        reasons.append(f"{regressions} regression{'s' if regressions != 1 else ''}: previously resolved finding(s) reappeared")
+        reasons.append(f"{regressions} regression{'s' if regressions != 1 else ''}: "
+                       "previously resolved finding(s) reappeared")
     if new_blocking:
-        reasons.append(f"{new_blocking} new blocking finding{'s' if new_blocking != 1 else ''} introduced since the baseline")
+        reasons.append(f"{new_blocking} new blocking finding{'s' if new_blocking != 1 else ''} "
+                       "introduced since the baseline")
     if policy.max_findings is not None and len(active) > policy.max_findings:
         reasons.append(f"{len(active)} open findings exceed the limit of {policy.max_findings}")
     return GateResult(status="FAIL" if reasons else "PASS", reasons=reasons, blocking=blocking, counts=counts,

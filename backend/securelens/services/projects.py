@@ -127,7 +127,8 @@ def list_project_members(db: Session, project: Project) -> list[tuple[ProjectMem
     ).all())
 
 
-def add_project_member(db: Session, principal: Principal, project: Project, user_id: uuid.UUID) -> tuple[ProjectMember, User]:
+def add_project_member(db: Session, principal: Principal, project: Project,
+                       user_id: uuid.UUID) -> tuple[ProjectMember, User]:
     membership = db.scalar(select(Membership).where(Membership.organization_id == project.organization_id,
                                                     Membership.user_id == user_id))
     user = db.get(User, user_id)

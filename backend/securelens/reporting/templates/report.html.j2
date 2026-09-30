@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:">
+<meta name="referrer" content="no-referrer">
+<meta name="generator" content="{{ meta.tool }} {{ meta.tool_version }}">
+<title>{{ meta.title }}</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--ink:#14171c;--muted:#5b6472;--line:#e3e6eb;--code:#f1f3f6;--accent:#2f5bea;
+--crit:#b3261e;--high:#d9480f;--med:#b7791f;--low:#2b6cb0;--info:#6b7280;--pass:#1f7a3d;--fail:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--panel:#171a21;--ink:#e7eaf0;--muted:#9aa3b2;--line:#2a2f3a;
+--code:#1e222b;--accent:#7c9cff;--crit:#ff6b62;--high:#ff8f4d;--med:#f0b44c;--low:#6fb1ff;--info:#a0a7b4;--pass:#4cc27a;--fail:#ff6b62}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.wrap{max-width:1120px;margin:0 auto;padding:24px 16px 48px}
+header.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:16px;margin-bottom:20px}
+.brand{font-weight:700;letter-spacing:.02em;color:var(--accent);font-size:13px;text-transform:uppercase}
+h1{font-size:24px;margin:4px 0 2px;line-height:1.25;word-break:break-word}
+h2{font-size:18px;margin:32px 0 12px}
+h3{font-size:15px;margin:18px 0 6px}
+.muted{color:var(--muted)}
+.meta{font-size:12.5px;color:var(--muted);text-align:right}
+.grid{display:grid;gap:12px}
+.kpis{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+.sevs{grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-top:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.kpi .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.kpi .value{font-size:28px;font-weight:700;margin-top:2px}
+.kpi .sub{font-size:12px;color:var(--muted)}
+.gauge{--v:0;width:92px;height:92px;border-radius:50%;background:conic-gradient(var(--gcol) calc(var(--v)*1%),var(--line) 0);display:grid;place-items:center;flex:none}
+.gauge span{background:var(--panel);width:70px;height:70px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:20px}
+.riskcard{display:flex;gap:14px;align-items:center}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11.5px;font-weight:700;letter-spacing:.03em;border:1px solid currentColor;white-space:nowrap}
+.CRITICAL{color:var(--crit)}.HIGH{color:var(--high)}.MEDIUM{color:var(--med)}.LOW{color:var(--low)}.INFO{color:var(--info)}
+.PASS{color:var(--pass)}.FAIL{color:var(--fail)}
+.bar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--line)}
+.bar i{display:block;height:100%}
+.bar .CRITICAL{background:var(--crit)}.bar .HIGH{background:var(--high)}.bar .MEDIUM{background:var(--med)}.bar .LOW{background:var(--low)}.bar .INFO{background:var(--info)}
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:8px;font-size:12.5px}
+.legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;background:currentColor}
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);background:var(--code)}
+tr:last-child td{border-bottom:0}
+td.loc,code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+td.loc{overflow-wrap:anywhere;min-width:180px}
+.tablewrap{overflow-x:auto}
+code{background:var(--code);padding:1px 5px;border-radius:4px;word-break:break-word}
+pre{background:var(--code);padding:10px 12px;border-radius:8px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;margin:6px 0}
+details.finding{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:10px 0}
+details.finding>summary{cursor:pointer;padding:12px 14px;list-style:none;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+details.finding>summary::-webkit-details-marker{display:none}
+details.finding[open]>summary{border-bottom:1px solid var(--line)}
+.fid{font-family:ui-monospace,monospace;font-weight:700;white-space:nowrap}
+.ftitle{font-weight:600;flex:1 1 320px}
+.fbody{padding:4px 16px 14px}
+.facts{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12.5px;color:var(--muted);margin:10px 0}
+.facts b{color:var(--ink);font-weight:600}
+ol.steps{padding-left:20px;margin:6px 0}
+ol.steps li{margin:6px 0}
+ol.steps .d{color:var(--muted);font-size:12.5px;word-break:break-word}
+.two{grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+ul.plain{margin:6px 0;padding-left:20px}
+ul.plain li{margin:4px 0}
+.limits{border-left:4px solid var(--med)}
+.notice{font-size:12.5px;color:var(--muted)}
+footer{margin-top:36px;padding-top:14px;border-top:1px solid var(--line);font-size:12px;color:var(--muted)}
+a{color:var(--accent)}
+@media print{body{background:#fff}.card,table,details.finding{break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div>
+    <div class="brand">{{ meta.tool }}</div>
+    <h1>{{ meta.title }}</h1>
+    <div class="muted">Target <code>{{ scope.target }}</code>{% if meta.project %} · Project {{ meta.project }}{% endif %}{% if scope.branch %} · Branch <code>{{ scope.branch }}</code>{% endif %}{% if scope.commit %} · Commit <code>{{ scope.commit[:12] }}</code>{% endif %}</div>
+  </div>
+  <div class="meta">Generated {{ meta.generated_at }}<br>{{ meta.tool }} {{ meta.tool_version }} · {{ scope.scope|lower }} scan</div>
+</header>
+
+<section class="grid kpis" aria-label="Summary">
+  {% if risk and risk.index is not none %}
+  {% set v = risk.index %}
+  <div class="card riskcard">
+    <div class="gauge" style="--v:{{ v }};--gcol:{% if v >= 75 %}var(--crit){% elif v >= 50 %}var(--high){% elif v >= 25 %}var(--med){% else %}var(--pass){% endif %}"><span>{{ '%.0f'|format(v) }}</span></div>
+    <div class="kpi"><div class="label">SecureLens Risk Index</div><div class="sub">0–100 · SecureLens-specific prioritisation aid, not CVSS</div></div>
+  </div>
+  {% endif %}
+  {% if gate %}
+  <div class="card kpi"><div class="label">Security gate</div><div class="value {{ gate.status }}">{{ gate.status }}</div>
+    <div class="sub">Fails on {{ gate.policy.fail_on|join(', ') }} at confidence ≥ {{ gate.policy.min_confidence }}</div></div>
+  {% endif %}
+  <div class="card kpi"><div class="label">Findings</div><div class="value">{{ summary.total }}</div>
+    <div class="sub">{{ scope.files_analyzed }} files · {{ scope.lines_analyzed }} lines analysed</div></div>
+</section>
+<section class="grid sevs" aria-label="Findings by severity">
+  {% for s in severities %}
+  <div class="card kpi"><div class="label">{{ s|title }}</div><div class="value {{ s }}">{{ summary.by_severity[s] }}</div></div>
+  {% endfor %}
+</section>
+
+{% if gate and gate.reasons %}
+<div class="card" style="margin-top:12px"><b class="FAIL">Gate failed because:</b>
+  <ul class="plain">{% for r in gate.reasons %}<li>{{ r }}</li>{% endfor %}</ul></div>
+{% endif %}
+
+{% if summary.total %}
+<div class="card" style="margin-top:12px">
+  <div class="bar" role="img" aria-label="Findings by severity">
+    {% for s in severities %}{% set n = summary.by_severity[s] %}{% if n %}<i class="{{ s }}" style="width:{{ (100.0 * n / summary.total)|round(2) }}%"></i>{% endif %}{% endfor %}
+  </div>
+  <div class="legend">
+    {% for s in severities %}<span class="{{ s }}"><b></b><span style="color:var(--ink)">{{ s|title }} {{ summary.by_severity[s] }}</span></span>{% endfor %}
+    <span class="muted">· {% for k, n in summary.by_source|dictsort %}{{ source_labels.get(k, k) }} {{ n }}{% if not loop.last %} · {% endif %}{% endfor %}</span>
+  </div>
+</div>
+{% endif %}
+
+{% if retest %}
+<h2>Retest</h2>
+<div class="tablewrap"><table>
+  <tr><th>Previous</th><th>Resolved</th><th>Still open</th><th>New</th><th>Regressions</th><th>Not tested</th><th>Not reproduced</th><th>Regression check</th></tr>
+  <tr><td>{{ retest.previous_findings }}</td><td class="PASS">{{ retest.resolved }}</td><td>{{ retest.still_open }}</td><td>{{ retest.new }}</td><td class="{% if retest.regressions %}FAIL{% endif %}">{{ retest.regressions }}</td><td>{{ retest.not_tested }}</td><td>{{ retest.not_reproduced }}</td><td class="{{ retest.regression_check }}"><b>{{ retest.regression_check }}</b></td></tr>
+</table></div>
+<p class="notice">RESOLVED means the file was analysed again by the same scanner and the issue is no longer detected. A missing file is NOT REPRODUCED, and a file or scanner outside this scan is NOT TESTED — neither counts as a fix.</p>
+{% endif %}
+
+<h2>Findings</h2>
+{% if findings %}
+<div class="tablewrap"><table>
+  <tr><th>ID</th><th>Severity</th><th>Finding</th><th>Location</th><th>Confidence</th><th>Exploitability</th></tr>
+  {% for f in findings %}
+  <tr><td class="fid">{{ f.id }}</td><td><span class="pill {{ f.severity }}">{{ f.severity }}</span></td><td>{{ f.title }}</td><td class="loc">{{ f.location|wbr }}</td><td>{{ f.confidence }}</td><td>{{ f.exploitability|replace('_', ' ')|lower }}</td></tr>
+  {% endfor %}
+</table></div>
+
+<h2>Finding details</h2>
+{% for f in findings %}
+<details class="finding" id="{{ f.id }}"{% if expand %} open{% endif %}>
+  <summary><span class="fid">{{ f.id }}</span><span class="pill {{ f.severity }}">{{ f.severity }}</span><span class="ftitle">{{ f.title }}</span><code>{{ f.location }}</code></summary>
+  <div class="fbody">
+    <div class="facts">
+      <span>Confidence <b>{{ f.confidence }}</b></span>
+      <span>Exploitability <b>{{ f.exploitability|replace('_', ' ')|lower }}</b></span>
+      <span>Verification <b>{{ f.verification|replace('_', ' ') }}</b></span>
+      {% if f.cwe %}<span>CWE <b>{{ f.cwe|join(', ') }}</b></span>{% endif %}
+      {% if f.owasp %}<span>OWASP <b>{{ f.owasp|join(', ') }}</b></span>{% endif %}
+      <span>Detected by <b>{{ f.scanners|join(', ') }}</b></span>
+      {% if f.function %}<span>Function <b>{{ f.function }}</b></span>{% endif %}
+    </div>
+    {% if f.snippet %}<pre>{{ f.snippet }}</pre>{% endif %}
+    <h3>Why SecureLens detected this</h3>
+    <ol class="steps">
+      {% for step in f.steps %}<li><b>{{ step.title }}</b>{% if step.get('detail') %}<div class="d">{{ step.detail }}</div>{% endif %}{% if step.get('code') %}<pre>{{ step.code }}</pre>{% endif %}</li>{% endfor %}
+    </ol>
+    <div class="grid two">
+      <div><h3>What is wrong</h3><p>{{ f.description }}</p></div>
+      <div><h3>Impact</h3><p>{{ f.impact }}</p></div>
+    </div>
+    <h3>How to fix it</h3>
+    <p>{{ f.recommendation }}</p>
+    {% if f.remediation %}<pre>{{ f.remediation }}</pre>{% endif %}
+    {% if f.references %}<h3>References</h3><ul class="plain">{% for r in f.references %}<li><a href="{{ r }}" rel="noopener noreferrer" target="_blank">{{ r }}</a></li>{% endfor %}</ul>{% endif %}
+    <p class="notice">Rule <code>{{ f.rule_id }}</code> · fingerprint <code>{{ f.fingerprint[:16] }}</code></p>
+  </div>
+</details>
+{% endfor %}
+{% else %}
+<div class="card">No findings were reported by the scanners that ran. This does not prove the code is free of vulnerabilities — see Scope and Limitations.</div>
+{% endif %}
+
+{% if dependencies %}
+<h2>Dependencies</h2>
+<div class="tablewrap"><table>
+  <tr><th>Package</th><th>Version</th><th>Ecosystem</th><th>Manifest</th><th>Known vulnerabilities</th></tr>
+  {% for d in dependencies %}
+  <tr><td>{{ d.name }}</td><td>{{ d.version or d.version_spec or '—' }}</td><td>{{ d.ecosystem }}</td><td class="loc">{{ d.manifest_path|wbr }}</td>
+  <td>{% if d.vuln_status == 'VULNERABLE' %}<span class="pill HIGH">VULNERABLE</span> {{ d.advisory_ids|join(', ') }}{% elif d.vuln_status == 'NO_KNOWN_VULNERABILITIES' %}<span class="pill PASS">NONE KNOWN</span>{% else %}<span class="pill INFO">NOT VERIFIED</span>{% endif %}</td></tr>
+  {% endfor %}
+</table></div>
+{% endif %}
+
+<h2>Scope</h2>
+<div class="grid two">
+  <div class="card">
+    <table style="border:0">
+      <tr><td class="muted">Target</td><td><code>{{ scope.target }}</code></td></tr>
+      <tr><td class="muted">Scan type</td><td>{{ scope.scope|title }}</td></tr>
+      <tr><td class="muted">Files</td><td>{{ scope.files_analyzed }} analysed of {{ scope.files_total }}</td></tr>
+      <tr><td class="muted">Lines analysed</td><td>{{ scope.lines_analyzed }}</td></tr>
+      <tr><td class="muted">Dependencies</td><td>{{ scope.dependencies_total }}</td></tr>
+      <tr><td class="muted">Started</td><td>{{ scope.started_at }}</td></tr>
+      <tr><td class="muted">Finished</td><td>{{ scope.finished_at }}</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <b>Languages</b>
+    <ul class="plain">{% for lang in scope.languages %}<li>{{ lang.name }} — {{ lang.files }} file{{ 's' if lang.files != 1 }}, {{ lang.lines }} lines{% if not lang.sast %} <span class="muted">(secrets only)</span>{% endif %}</li>{% else %}<li class="muted">No source files recognised</li>{% endfor %}</ul>
+  </div>
+</div>
+<h3>Scanners</h3>
+<div class="tablewrap"><table>
+  <tr><th>Scanner</th><th>Status</th><th>Raw results</th><th>Details</th></tr>
+  {% for s in scope.scanners %}
+  <tr><td>{{ s.label }}</td><td><span class="pill {{ 'PASS' if s.status == 'ran' else 'INFO' }}">{{ s.status|upper }}</span></td><td>{{ s.findings if s.status == 'ran' else '—' }}</td><td class="muted">{{ s.detail or '' }}</td></tr>
+  {% endfor %}
+</table></div>
+<p class="notice">Raw results are counted per scanner before correlation merges reports of the same issue, so they can add up to more than the number of findings.</p>
+
+<h2>Methodology</h2>
+{% for m in methodology %}<h3>{{ m.name }}</h3><p>{{ m.text }}</p>{% endfor %}
+
+<h2>Limitations</h2>
+<div class="card limits"><ul class="plain">{% for item in limitations %}<li>{{ item }}</li>{% endfor %}</ul></div>
+
+{% if errors %}
+<h3>Analysis errors</h3>
+<ul class="plain muted">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+{% endif %}
+
+<footer>
+  Generated by {{ meta.tool }} {{ meta.tool_version }} on {{ meta.generated_at }}.
+  Severity, confidence, exploitability and verification are reported separately; AI output is never treated as authoritative.
+  The SecureLens Risk Index is SecureLens's own prioritisation method, not CVSS and not a measure of overall security.
+</footer>
+</div>
+</body>
+</html>

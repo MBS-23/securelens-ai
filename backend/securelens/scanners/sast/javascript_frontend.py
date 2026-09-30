@@ -5,7 +5,7 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from securelens.scanners.sast import ir
-from securelens.scanners.sast.treesitter import count_errors, named_children, parse, pos, text
+from securelens.scanners.sast.treesitter import count_errors, named_children, parse, pos, text, unary_kind
 
 _FUNCTION_TYPES = {"function_declaration", "generator_function_declaration", "function_expression", "function",
                    "arrow_function", "generator_function", "method_definition"}
@@ -90,7 +90,7 @@ class _Lowerer:
             alt = node.child_by_field_name("alternative")
             orelse: list[ir.Stmt] = []
             if alt is not None:
-                inner = [c for c in named_children(alt)]
+                inner = list(named_children(alt))
                 orelse = self.block(inner) if alt.type == "else_clause" else self.body_of(alt)
             return [ir.If(**p, test=self.expr(node.child_by_field_name("condition")),
                           body=self.body_of(node.child_by_field_name("consequence")), orelse=orelse)]
@@ -136,7 +136,7 @@ class _Lowerer:
             return chain or [ir.ExprStmt(**p, expr=value)]
         if t == "throw_statement":
             inner = named_children(node)
-            return [ir.ExprStmt(**p, expr=self.expr(inner[0]))] if inner else []
+            return [ir.ExprStmt(**p, expr=self.expr(inner[0]) if inner else None, exits=True)]
         if t == "statement_block":
             return self.block(named_children(node), toplevel)
         if t == "labeled_statement":
@@ -392,7 +392,8 @@ class _Lowerer:
         elif t == "assignment_pattern":
             left = node.child_by_field_name("left")
             if left is not None:
-                params.append(ir.Param(name=text(left), index=index, default=self.expr(node.child_by_field_name("right"))))
+                params.append(ir.Param(name=text(left), index=index,
+                                       default=self.expr(node.child_by_field_name("right"))))
         elif t == "rest_pattern":
             ident = next((c for c in named_children(node)), None)
             if ident is not None:
@@ -444,7 +445,8 @@ class _Lowerer:
                 return ir.Name(**p, id=f"{spec}.{member}" if member else spec)
             func = self.expr(func_node)
             if args_node is not None and args_node.type == "template_string":
-                return ir.Call(**p, func=func, args=[self.expr(args_node)], kwargs={"__tagged__": ir.Const(**p, value=True)})
+                return ir.Call(**p, func=func, args=[self.expr(args_node)],
+                               kwargs={"__tagged__": ir.Const(**p, value=True)})
             args = [self.expr(a) for a in named_children(args_node)] if args_node is not None else []
             return ir.Call(**p, func=func, args=args)
         if t == "new_expression":
@@ -494,7 +496,7 @@ class _Lowerer:
             return ir.Other(**p, children=[self.expr(node.child_by_field_name("consequence")),
                                            self.expr(node.child_by_field_name("alternative"))], kind="ternary")
         if t in {"unary_expression", "update_expression"}:
-            return ir.Other(**p, children=[self.expr(c) for c in named_children(node)], kind="unary")
+            return ir.Other(**p, children=[self.expr(c) for c in named_children(node)], kind=unary_kind(node))
         if t in {"assignment_expression", "augmented_assignment_expression"}:
             return ir.Other(**p, children=[self.expr(node.child_by_field_name("right"))], kind="assign")
         if t == "object":
@@ -541,7 +543,8 @@ class _Lowerer:
                     continue
                 lowered = self.expr(value)
                 if attr_name == "dangerouslySetInnerHTML":
-                    children.append(ir.Call(**pos(child), func=ir.Name(**pos(child), id="__jsx_dangerouslySetInnerHTML__"),
+                    marker = ir.Name(**pos(child), id="__jsx_dangerouslySetInnerHTML__")
+                    children.append(ir.Call(**pos(child), func=marker,
                                             args=[lowered]))
                 elif attr_name in {"href", "src", "action", "formAction"}:
                     children.append(ir.Call(**pos(child), func=ir.Name(**pos(child), id=f"__jsx_url_{attr_name}__"),

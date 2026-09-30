@@ -67,6 +67,14 @@ def named_children(node: Node) -> list[Node]:
     return [c for c in node.children if c.is_named and c.type != "comment"]
 
 
+def unary_kind(node: Node) -> str:
+    """IR kind for a prefix operator node: ``not`` for logical negation, ``unary`` otherwise."""
+    op = node.child_by_field_name("operator")
+    if op is None and node.children and not node.children[0].is_named:
+        op = node.children[0]
+    return "not" if text(op) == "!" else "unary"
+
+
 def count_errors(node: Node, limit: int = 1000) -> int:
     """Number of ERROR / MISSING nodes (bounded)."""
     count = 0

@@ -11,7 +11,7 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from securelens.scanners.sast import ir
-from securelens.scanners.sast.treesitter import count_errors, named_children, parse, pos, text
+from securelens.scanners.sast.treesitter import count_errors, named_children, parse, pos, text, unary_kind
 
 _COMPARE_OPS = {"==", "===", "!=", "!==", "<>", "<", ">", "<=", ">=", "<=>", "instanceof"}
 _INCLUDES = {"include_expression": "include", "include_once_expression": "include_once",
@@ -93,6 +93,9 @@ class _Lowerer:
             if e.type == "reference_assignment_expression":
                 return [ir.Assign(**p, targets=self.targets(e.child_by_field_name("left")),
                                   value=self.expr(e.child_by_field_name("right")))]
+            if e.type == "throw_expression":
+                thrown = named_children(e)
+                return [ir.ExprStmt(**p, expr=self.expr(thrown[0]) if thrown else None, exits=True)]
             return [ir.ExprStmt(**p, expr=self.expr(e))]
         if t == "echo_statement":
             args = [self.expr(c) for c in named_children(node)]
@@ -156,7 +159,7 @@ class _Lowerer:
             value = self.expr(node.child_by_field_name("condition"))
             body = node.child_by_field_name("body")
             chain: list[ir.Stmt] = []
-            cases = [c for c in named_children(body)] if body is not None else []
+            cases = list(named_children(body)) if body is not None else []
             for case in reversed(cases):
                 stmts = [c for c in named_children(case) if c != case.child_by_field_name("value")]
                 chain = [ir.If(**pos(case), test=value, body=self.block(stmts), orelse=chain)]
@@ -275,7 +278,8 @@ class _Lowerer:
         if t == "function_call_expression":
             func_node = node.child_by_field_name("function")
             func = self.expr(func_node)
-            if isinstance(func, ir.Name) and "." in func.id and func_node is not None and func_node.type == "qualified_name":
+            qualified = func_node is not None and func_node.type == "qualified_name"
+            if isinstance(func, ir.Name) and "." in func.id and qualified:
                 func = ir.Name(**pos(func_node), id=func.id.rsplit(".", 1)[-1])
             return ir.Call(**p, func=func, args=self.arguments(node.child_by_field_name("arguments")))
         if t in {"member_call_expression", "nullsafe_member_call_expression"}:
@@ -339,7 +343,7 @@ class _Lowerer:
                             kind="ternary")
         if t in {"unary_op_expression", "update_expression", "error_suppression_expression", "clone_expression",
                  "reference_modifier"}:
-            return ir.Other(**p, children=[self.expr(k) for k in named_children(node)], kind="unary")
+            return ir.Other(**p, children=[self.expr(k) for k in named_children(node)], kind=unary_kind(node))
         if t == "array_creation_expression":
             keys: list[ir.Expr | None] = []
             values: list[ir.Expr] = []

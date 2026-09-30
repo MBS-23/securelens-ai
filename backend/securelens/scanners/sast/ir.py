@@ -14,7 +14,6 @@ boundaries) and folds everything else into ``Other``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Union
 
 
 @dataclass(eq=False)
@@ -107,7 +106,7 @@ class Other(Node):
     kind: str = ""
 
 
-Expr = Union[Name, Attr, Subscript, Call, Str, Const, Concat, DictLit, ListLit, Compare, FuncExpr, Other]
+Expr = Name | Attr | Subscript | Call | Str | Const | Concat | DictLit | ListLit | Compare | FuncExpr | Other
 
 
 # --------------------------------------------------------------------------
@@ -125,6 +124,7 @@ class Assign(Node):
 @dataclass(eq=False)
 class ExprStmt(Node):
     expr: Expr | None = None
+    exits: bool = False  # raise / throw: control does not continue past this statement
 
 
 @dataclass(eq=False)
@@ -157,7 +157,7 @@ class FunctionDef(Node):
     func: Function | None = None
 
 
-Stmt = Union[Assign, ExprStmt, Return, If, Loop, Try, FunctionDef]
+Stmt = Assign | ExprStmt | Return | If | Loop | Try | FunctionDef
 
 
 # --------------------------------------------------------------------------

@@ -170,7 +170,7 @@ class _Lowerer:
         if isinstance(node, ast.Match):
             return [self._match(node)]
         if isinstance(node, ast.Raise):
-            return [ir.ExprStmt(**pos, expr=self.expr(node.exc))] if node.exc else []
+            return [ir.ExprStmt(**pos, expr=self.expr(node.exc) if node.exc else None, exits=True)]
         if isinstance(node, ast.Assert):
             children = [self.expr(node.test)] + ([self.expr(node.msg)] if node.msg else [])
             return [ir.ExprStmt(**pos, expr=ir.Other(**pos, children=children, kind="assert"))]
@@ -287,7 +287,8 @@ class _Lowerer:
         if isinstance(node, ast.BoolOp):
             return ir.Other(**pos, children=[self.expr(v) for v in node.values], kind="boolop")
         if isinstance(node, ast.UnaryOp):
-            return ir.Other(**pos, children=[self.expr(node.operand)], kind="unary")
+            return ir.Other(**pos, children=[self.expr(node.operand)],
+                            kind="not" if isinstance(node.op, ast.Not) else "unary")
         if isinstance(node, ast.ListComp | ast.SetComp | ast.GeneratorExp):
             children = [self.expr(node.elt)] + [self.expr(g.iter) for g in node.generators]
             return ir.Other(**pos, children=children, kind="comprehension")
@@ -299,7 +300,8 @@ class _Lowerer:
         if isinstance(node, ast.Yield | ast.YieldFrom):
             return ir.Other(**pos, children=[self.expr(node.value)] if node.value else [], kind="yield")
         if isinstance(node, ast.Slice):
-            return ir.Other(**pos, children=[self.expr(p) for p in (node.lower, node.upper, node.step) if p], kind="slice")
+            bounds = [self.expr(p) for p in (node.lower, node.upper, node.step) if p]
+            return ir.Other(**pos, children=bounds, kind="slice")
         if isinstance(node, ast.FormattedValue):
             return self.expr(node.value)
         return ir.Other(**pos, children=[], kind=type(node).__name__)

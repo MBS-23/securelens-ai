@@ -93,7 +93,8 @@ def enrich(result: ScanResult, options: ScanOptions, root: Path | None = None, s
         for dep in result.dependencies:
             if dep.manifest_path not in lines:
                 try:
-                    lines[dep.manifest_path] = (base / dep.manifest_path).read_text("utf-8", errors="replace").splitlines()
+                    text = (base / dep.manifest_path).read_text("utf-8", errors="replace")
+                    lines[dep.manifest_path] = text.splitlines()
                 except OSError:
                     lines[dep.manifest_path] = []
     deps.enrich(result, options, source=source, manifest_lines=lines)
@@ -144,7 +145,8 @@ def compute_stats(result: ScanResult) -> dict:
     for f in result.files:
         by_status[f.status] = by_status.get(f.status, 0) + 1
         if f.status == "ANALYZED" and f.language:
-            entry = languages.setdefault(f.language, {"files": 0, "lines": 0, "sast": int(f.language in SAST_LANGUAGES)})
+            entry = languages.setdefault(f.language,
+                                         {"files": 0, "lines": 0, "sast": int(f.language in SAST_LANGUAGES)})
             entry["files"] += 1
             entry["lines"] += f.line_count
     severity: dict[str, int] = {}

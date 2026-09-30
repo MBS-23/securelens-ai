@@ -124,7 +124,8 @@ class BanditScanner:
                 severity=_SEV.get(item.get("issue_severity", "MEDIUM"), Severity.MEDIUM),
                 confidence=_CONF.get(item.get("issue_confidence", "MEDIUM"), Confidence.MEDIUM),
                 path=_relative(ctx.root, item.get("filename", "")), line=item.get("line_number"),
-                col=(item.get("col_offset") or 0) + 1, snippet=_bandit_line(item.get("code", ""), item.get("line_number")),
+                col=(item.get("col_offset") or 0) + 1,
+                snippet=_bandit_line(item.get("code", ""), item.get("line_number")),
                 cwes=[cwe] if cwe else [], extra={"test_id": test_id, "more_info": item.get("more_info")},
             ))
         return ScannerResult(run=ScannerRun(scanner=self.name, status="ran", findings=len(findings),

@@ -167,7 +167,8 @@ def load_project(db: Session, principal: Principal, project_id: uuid.UUID, permi
     return project
 
 
-def accessible_project_ids(db: Session, principal: Principal, organization_id: uuid.UUID | None = None) -> list[uuid.UUID]:
+def accessible_project_ids(db: Session, principal: Principal,
+                           organization_id: uuid.UUID | None = None) -> list[uuid.UUID]:
     """Every project the principal may read, optionally within one organization."""
     org_ids = [organization_id] if organization_id else principal.org_ids()
     result: list[uuid.UUID] = []

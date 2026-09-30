@@ -72,6 +72,10 @@ sanitizers:
   - match: ["os.path.basename", "werkzeug.utils.secure_filename", "secure_filename", "*.secure_filename",
             "pathvalidate.sanitize_filename", "sanitize_filename"]
     classes: [path_traversal, unsafe_file_handling]
+  # safe_join returns None instead of a path outside the base directory.
+  - match: ["werkzeug.utils.safe_join", "werkzeug.security.safe_join", "flask.safe_join", "flask.helpers.safe_join",
+            "safe_join", "*.safe_join"]
+    classes: [path_traversal]
   - match: ["urllib.parse.quote", "urllib.parse.quote_plus", "quote", "quote_plus"]
     classes: [xss, command_injection, open_redirect]
   - match: ["*hash*", "*.hash", "generate_password_hash", "*.generate_password_hash", "make_password",

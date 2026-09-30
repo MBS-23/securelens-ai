@@ -98,6 +98,9 @@ def convert(raw: RawFinding, lines: dict[str, list[str]]) -> Finding:
         title = f"LLM tool argument reaches a {base.name} sink"
     elif base is not None and raw.vuln_class == "rag_prompt_injection":
         title = "Retrieved content placed in LLM system instructions"
+    elif raw.origin_unknown:
+        # No source was traced, so the title must not claim the input is untrusted.
+        title = f"Possible {vc.name}: value of untraced origin reaches {raw.sink}"
 
     location = Location(path=raw.path, start_line=raw.line, end_line=raw.end_line or raw.line,
                         start_col=raw.col + 1 if raw.col is not None else None, function=raw.function,
@@ -126,7 +129,7 @@ def convert(raw: RawFinding, lines: dict[str, list[str]]) -> Finding:
             location=location,
             data={"steps": [{"path": st.path, "line": st.line, "note": st.note,
                              "code": _line(lines, st.path, st.line)} for st in raw.steps],
-                  "sink": raw.sink, "origin": "unknown"},
+                  "sink": raw.sink, "origin": "unknown" if raw.origin_unknown else "state"},
         ))
     else:
         evidence.append(Evidence(kind="pattern", source=SCANNER_NAME, summary=raw.message, location=location,

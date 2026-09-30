@@ -821,7 +821,7 @@ buffer_overflow:
   name: Buffer Overflow
   engine: APPSEC
   cwe: [CWE-120, CWE-787]
-  owasp: ["A06:2021 Vulnerable and Outdated Components"]
+  owasp: []  # no OWASP Top 10 category fits; CWE is the reference taxonomy
   severity: CRITICAL
   description: Data is copied into a fixed-size buffer without checking that it fits (strcpy, strcat, sprintf, gets, scanf("%s")). Bytes beyond the buffer overwrite adjacent memory.
   impact: Memory corruption — crashes, data corruption and, commonly, arbitrary code execution by overwriting return addresses or function pointers.
@@ -842,7 +842,7 @@ out_of_bounds:
   name: Out-of-Bounds Access
   engine: APPSEC
   cwe: [CWE-125, CWE-787, CWE-129]
-  owasp: ["A06:2021 Vulnerable and Outdated Components"]
+  owasp: []  # no OWASP Top 10 category fits; CWE is the reference taxonomy
   severity: HIGH
   description: An index or length derived from input is used to read or write memory without verifying it is within the object's bounds.
   impact: Out-of-bounds reads leak memory (secrets, pointers); out-of-bounds writes corrupt memory and can lead to code execution.
@@ -859,7 +859,7 @@ use_after_free:
   name: Use After Free
   engine: APPSEC
   cwe: [CWE-416]
-  owasp: ["A06:2021 Vulnerable and Outdated Components"]
+  owasp: []  # no OWASP Top 10 category fits; CWE is the reference taxonomy
   severity: CRITICAL
   description: Memory is accessed through a pointer after it has been freed. The allocator may already have handed that memory to another object.
   impact: Memory corruption that attackers commonly turn into arbitrary code execution.
@@ -879,7 +879,7 @@ double_free:
   name: Double Free
   engine: APPSEC
   cwe: [CWE-415]
-  owasp: ["A06:2021 Vulnerable and Outdated Components"]
+  owasp: []  # no OWASP Top 10 category fits; CWE is the reference taxonomy
   severity: HIGH
   description: The same memory is freed twice.
   impact: Allocator metadata corruption, which can be exploited for arbitrary writes and code execution.
@@ -909,7 +909,7 @@ integer_overflow:
   name: Integer Overflow
   engine: APPSEC
   cwe: [CWE-190, CWE-680]
-  owasp: ["A06:2021 Vulnerable and Outdated Components"]
+  owasp: []  # no OWASP Top 10 category fits; CWE is the reference taxonomy
   severity: HIGH
   description: A size or count computation can wrap around (for example n * sizeof(item)), producing a small allocation that is later overflowed.
   impact: Heap overflows and memory corruption.
@@ -926,7 +926,7 @@ race_condition:
   name: Race Condition
   engine: APPSEC
   cwe: [CWE-362, CWE-367]
-  owasp: ["A04:2021 Insecure Design"]
+  owasp: []  # no OWASP Top 10 category fits; CWE is the reference taxonomy
   severity: MEDIUM
   description: The outcome depends on the timing of concurrent operations — a check followed by a use that can be interleaved (TOCTOU), or shared state modified by several threads or goroutines without synchronization.
   impact: Security checks can be bypassed between check and use; unsynchronized shared state causes corruption and inconsistent authorization decisions.

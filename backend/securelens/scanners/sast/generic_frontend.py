@@ -11,7 +11,7 @@ from __future__ import annotations
 from tree_sitter import Node
 
 from securelens.scanners.sast import ir
-from securelens.scanners.sast.treesitter import count_errors, named_children, parse, pos, text
+from securelens.scanners.sast.treesitter import count_errors, named_children, parse, pos, text, unary_kind
 
 _COMPARE = {"==", "!=", "<", ">", "<=", ">=", "===", "!=="}
 _LOGICAL = {"&&", "||", "and", "or", "??"}
@@ -94,7 +94,7 @@ class _BaseLowerer:
                 orelse = self.block(named_children(alt)) if alt.type == "else_clause" else self.body_of(alt)
             init = node.child_by_field_name("initializer")
             pre = self.stmt(init, False) if init is not None else []
-            return pre + [ir.If(**p, test=self.expr(cond), body=self.body_of(node.child_by_field_name("consequence")),
+            return [*pre, ir.If(**p, test=self.expr(cond), body=self.body_of(node.child_by_field_name("consequence")),
                                 orelse=orelse)]
         if t in {"while_statement", "do_statement"}:
             cond = node.child_by_field_name("condition")
@@ -104,7 +104,7 @@ class _BaseLowerer:
             return [self.for_loop(node)]
         if t in {"throw_statement", "throw_expression"}:
             inner = named_children(node)
-            return [ir.ExprStmt(**p, expr=self.expr(inner[0]))] if inner else []
+            return [ir.ExprStmt(**p, expr=self.expr(inner[0]) if inner else None, exits=True)]
         if t == "try_statement":
             return [self.try_stmt(node)]
         if t in {"labeled_statement", "synchronized_statement", "lock_statement", "unsafe_statement",
@@ -263,7 +263,7 @@ class _BaseLowerer:
         if t in {"assignment_expression"}:
             return ir.Other(**p, children=[self.expr(node.child_by_field_name("right"))], kind="assign")
         if t in {"unary_expression", "update_expression", "prefix_unary_expression", "postfix_unary_expression"}:
-            return ir.Other(**p, children=[self.expr(c) for c in named_children(node)], kind="unary")
+            return ir.Other(**p, children=[self.expr(c) for c in named_children(node)], kind=unary_kind(node))
         return ir.Other(**p, children=[self.expr(c) for c in named_children(node)
                                        if not c.type.endswith(("type", "type_arguments", "type_parameters"))],
                         kind=t)
@@ -345,7 +345,7 @@ class JavaLowerer(_BaseLowerer):
                 if name is not None and value is not None:
                     pre.append(ir.Assign(**pos(res), targets=[ir.Name(**pos(name), id=text(name))],
                                          value=self.expr(value)))
-            return pre + [self.try_stmt(node)]
+            return [*pre, self.try_stmt(node)]
         if t in {"switch_expression", "switch_statement"}:
             value = self.expr(node.child_by_field_name("condition"))
             body = node.child_by_field_name("body")
@@ -370,7 +370,8 @@ class JavaLowerer(_BaseLowerer):
                         args_node = mod.child_by_field_name("arguments")
                         name_expr = ir.Name(**pos(mod), id=name.rsplit(".", 1)[-1])
                         if args_node is not None:
-                            out.append(ir.Call(**pos(mod), func=name_expr, args=[self.expr(a) for a in named_children(args_node)]))
+                            out.append(ir.Call(**pos(mod), func=name_expr,
+                                               args=[self.expr(a) for a in named_children(args_node)]))
                         else:
                             out.append(name_expr)
         return out
@@ -523,14 +524,15 @@ class CSharpLowerer(_BaseLowerer):
             body = node.child_by_field_name("body")
             chain: list[ir.Stmt] = []
             for section in reversed(named_children(body) if body is not None else []):
-                stmts = [c for c in named_children(section) if c.type not in {"case_switch_label", "default_switch_label",
-                                                                              "constant_pattern", "case_pattern_switch_label"}]
+                labels = {"case_switch_label", "default_switch_label", "constant_pattern", "case_pattern_switch_label"}
+                stmts = [c for c in named_children(section) if c.type not in labels]
                 chain = [ir.If(**pos(section), test=value, body=self.block(stmts), orelse=chain)]
             return chain or [ir.ExprStmt(**p, expr=value)]
         if t == "class_declaration":
             base_list = next((c for c in named_children(node) if c.type == "base_list"), None)
             is_controller = base_list is not None and any(
-                text(b).endswith(("Controller", "ControllerBase", "PageModel", "Hub")) for b in named_children(base_list))
+                text(b).endswith(("Controller", "ControllerBase", "PageModel", "Hub"))
+                for b in named_children(base_list))
             attrs = self.attributes(node)
             is_controller = is_controller or any(isinstance(a, ir.Name) and a.id in {"ApiController", "Controller"}
                                                  for a in attrs)
@@ -638,7 +640,9 @@ class CSharpLowerer(_BaseLowerer):
         if t == "cast_expression":
             type_text = text(node.child_by_field_name("type"))
             value = self.expr(node.child_by_field_name("value"))
-            return ir.Call(**p, func=ir.Name(**p, id=f"({type_text})"), args=[value]) if type_text in _INT_TYPES else value
+            if type_text in _INT_TYPES:
+                return ir.Call(**p, func=ir.Name(**p, id=f"({type_text})"), args=[value])
+            return value
         if t in {"await_expression", "parenthesized_expression", "checked_expression", "ref_expression"}:
             kids = named_children(node)
             return self.expr(kids[-1]) if kids else ir.Other(**p)
@@ -841,7 +845,9 @@ class GoLowerer(_BaseLowerer):
         if t == "unary_expression":
             op = text(node.child_by_field_name("operator"))
             operand = self.expr(node.child_by_field_name("operand"))
-            return operand if op in {"&", "*", "<-"} else ir.Other(**p, children=[operand], kind="unary")
+            if op in {"&", "*", "<-"}:
+                return operand
+            return ir.Other(**p, children=[operand], kind="not" if op == "!" else "unary")
         if t == "composite_literal":
             type_node = node.child_by_field_name("type")
             body = node.child_by_field_name("body")
@@ -857,8 +863,11 @@ class GoLowerer(_BaseLowerer):
                         values.append(self.expr(kids[1]))
                 return ir.Call(**p, func=ir.Name(**p, id=type_name), args=[ir.DictLit(**p, keys=keys, values=values)],
                                is_new=True)
-            items = [self.expr(c) for c in named_children(body)] if body is not None else []
-            return ir.ListLit(**p, items=items)
+            elements = named_children(body) if body is not None else []
+            # Newer grammars wrap each element: literal_value > literal_element > expression.
+            elements = [named_children(c)[0] if c.type == "literal_element" and named_children(c) else c
+                        for c in elements]
+            return ir.ListLit(**p, items=[self.expr(c) for c in elements])
         if t in {"raw_string_literal"}:
             return ir.Str(**p, value=text(node).strip("`"))
         if t in {"iota"}:
@@ -918,7 +927,8 @@ class CLowerer(_BaseLowerer):
             if name is not None and value is not None:
                 raw = text(value).strip()
                 if raw.startswith('"') and raw.endswith('"'):
-                    return [ir.Assign(**p, targets=[ir.Name(**pos(name), id=text(name))], value=ir.Str(**p, value=raw[1:-1]))]
+                    return [ir.Assign(**p, targets=[ir.Name(**pos(name), id=text(name))],
+                                      value=ir.Str(**p, value=raw[1:-1]))]
             return []
         if t in {"preproc_ifdef", "preproc_if", "preproc_else", "preproc_elif", "linkage_specification",
                  "namespace_definition", "template_declaration", "export_declaration"}:
@@ -957,7 +967,8 @@ class CLowerer(_BaseLowerer):
             stream = text(current).replace("::", ".") if current is not None else ""
             if stream.endswith(("cin", "wcin")) or stream.endswith("ifstream"):
                 p = pos(node)
-                return [ir.Assign(**p, targets=[self.expr(o)], value=ir.Call(**p, func=ir.Name(**p, id=f"{stream}.extract")))
+                return [ir.Assign(**p, targets=[self.expr(o)],
+                                  value=ir.Call(**p, func=ir.Name(**p, id=f"{stream}.extract")))
                         for o in reversed(operands)]
         return super().expr_stmt(node)
 
@@ -1047,7 +1058,8 @@ class CLowerer(_BaseLowerer):
                 size = named_children(declarator)
                 return ir.Call(**p, func=ir.Name(**p, id="new[]"), args=[self.expr(size[0])] if size else [],
                                is_new=True)
-            return ir.Call(**p, func=ir.Name(**p, id=text(type_node).split("<", 1)[0] if type_node is not None else "new"),
+            type_name = text(type_node).split("<", 1)[0] if type_node is not None else "new"
+            return ir.Call(**p, func=ir.Name(**p, id=type_name),
                            args=self.arguments(args_node), is_new=True)
         if t == "delete_expression":
             kids = named_children(node)

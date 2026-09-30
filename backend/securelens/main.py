@@ -82,7 +82,25 @@ def create_app() -> FastAPI:
                                     headers={"Retry-After": str(int(retry_after) + 1)})
 
         length = request.headers.get("content-length")
-        if length is not None and not path.endswith(_STREAMING_UPLOAD_SUFFIXES):
+        if length is None and "chunked" in request.headers.get("transfer-encoding", "").lower():
+            # Size limits are enforced on Content-Length; unbounded chunked bodies are refused.
+            return JSONResponse(error_body(request, "length_required", "Content-Length is required"),
+                                status_code=411)
+        if path.endswith(_STREAMING_UPLOAD_SUFFIXES) and request.method == "POST":
+            # Multipart bodies are spooled to disk before the endpoint runs, so bound them up front.
+            limit = settings.max_upload_mb * 1024 * 1024 + 1024 * 1024
+            if length is None:
+                return JSONResponse(error_body(request, "length_required", "Content-Length is required"),
+                                    status_code=411)
+            try:
+                too_big = int(length) > limit
+            except ValueError:
+                too_big = True
+            if too_big:
+                return JSONResponse(error_body(request, "payload_too_large",
+                                               f"Upload exceeds the limit of {settings.max_upload_mb} MB"),
+                                    status_code=413)
+        elif length is not None:
             limit = _IMPORT_BODY_LIMIT if path.endswith("/scans/import") else _JSON_BODY_LIMIT
             try:
                 too_big = int(length) > limit

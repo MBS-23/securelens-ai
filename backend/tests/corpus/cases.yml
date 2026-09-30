@@ -1272,3 +1272,146 @@
     #include <cstdlib>
     #include <iostream>
     int main() { std::string host; std::cin >> host; std::system(("ping -c 1 " + host).c_str()); return 0; }
+
+# ======================================================= Allow-list guards
+- id: py-allowlist-guard-safe
+  file: app.py
+  absent: [sql_injection]
+  code: |
+    from flask import Flask, request, abort
+    app = Flask(__name__)
+    ALLOWED_TABLES = {"orders", "users"}
+    @app.route("/count")
+    def count():
+        table = request.args["table"]
+        if table not in ALLOWED_TABLES:
+            abort(400)
+        return str(db.execute(f"SELECT count(*) FROM {table}").fetchone())
+- id: py-allowlist-guard-positive-branch-safe
+  file: app.py
+  absent: [sql_injection]
+  code: |
+    from flask import Flask, request
+    app = Flask(__name__)
+    @app.route("/count")
+    def count():
+        table = request.args["table"]
+        if table in ("orders", "users"):
+            return str(db.execute(f"SELECT count(*) FROM {table}").fetchone())
+        return "unknown table", 400
+- id: py-allowlist-guard-without-exit-vuln
+  file: app.py
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    from flask import Flask, request
+    app = Flask(__name__)
+    ALLOWED_TABLES = {"orders", "users"}
+    @app.route("/count")
+    def count():
+        table = request.args["table"]
+        if table not in ALLOWED_TABLES:
+            app.logger.warning("unexpected table")
+        return str(db.execute(f"SELECT count(*) FROM {table}").fetchone())
+- id: py-allowlist-mutated-collection-vuln
+  file: app.py
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    from flask import Flask, request, abort
+    app = Flask(__name__)
+    ALLOWED_TABLES = ["orders"]
+    @app.route("/count")
+    def count():
+        ALLOWED_TABLES.append(request.args["extra"])
+        table = request.args["table"]
+        if table not in ALLOWED_TABLES:
+            abort(400)
+        return str(db.execute(f"SELECT count(*) FROM {table}").fetchone())
+- id: py-safe-join-safe
+  file: app.py
+  absent: [path_traversal]
+  code: |
+    from flask import Flask, request, abort
+    from werkzeug.utils import safe_join
+    app = Flask(__name__)
+    @app.route("/file")
+    def read_file():
+        path = safe_join("/var/data", request.args["f"])
+        if path is None:
+            abort(404)
+        with open(path) as fh:
+            return fh.read()
+- id: js-allowlist-guard-safe
+  file: server.js
+  absent: [sql_injection]
+  code: |
+    const express = require("express");
+    const app = express();
+    const SORT_COLUMNS = ["name", "created_at"];
+    app.get("/items", (req, res) => {
+      const column = req.query.sort;
+      if (!SORT_COLUMNS.includes(column)) {
+        return res.status(400).send("bad sort column");
+      }
+      db.query("SELECT * FROM items ORDER BY " + column, (err, rows) => res.json(rows));
+    });
+- id: js-allowlist-guard-vuln
+  file: server.js
+  expect: [sql_injection]
+  min_confidence: HIGH
+  code: |
+    const express = require("express");
+    const app = express();
+    app.get("/items", (req, res) => {
+      const column = req.query.sort;
+      db.query("SELECT * FROM items ORDER BY " + column, (err, rows) => res.json(rows));
+    });
+- id: php-allowlist-guard-safe
+  file: list.php
+  absent: [sql_injection]
+  code: |
+    <?php
+    $allowed = ['name', 'created_at'];
+    $column = $_GET['sort'];
+    if (!in_array($column, $allowed, true)) {
+        http_response_code(400);
+        exit;
+    }
+    $rows = $db->query("SELECT * FROM items ORDER BY " . $column);
+- id: java-allowlist-guard-safe
+  file: ItemController.java
+  absent: [sql_injection]
+  code: |
+    import java.util.Set;
+    import org.springframework.web.bind.annotation.*;
+    @RestController
+    public class ItemController {
+        private static final Set<String> SORT_COLUMNS = Set.of("name", "created_at");
+        @GetMapping("/items")
+        public Object items(@RequestParam String sort) {
+            if (!SORT_COLUMNS.contains(sort)) {
+                throw new IllegalArgumentException("bad sort column");
+            }
+            return jdbcTemplate.queryForList("SELECT * FROM items ORDER BY " + sort);
+        }
+    }
+- id: go-allowlist-guard-safe
+  file: handler.go
+  absent: [sql_injection]
+  code: |
+    package main
+    import (
+        "database/sql"
+        "net/http"
+        "slices"
+    )
+    var db *sql.DB
+    func items(w http.ResponseWriter, r *http.Request) {
+        column := r.URL.Query().Get("sort")
+        if !slices.Contains([]string{"name", "created_at"}, column) {
+            http.Error(w, "bad sort column", http.StatusBadRequest)
+            return
+        }
+        db.Query("SELECT * FROM items ORDER BY " + column)
+    }

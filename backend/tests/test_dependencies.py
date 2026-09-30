@@ -14,7 +14,7 @@ import httpx
 from securelens.findings.model import DependencyRecord, ScanResult
 from securelens.scanners.base import ScanOptions
 from securelens.scanners.dependencies import scanner as deps
-from securelens.scanners.dependencies.advisories import OfflineSource, OSVSource
+from securelens.scanners.dependencies.advisories import OSVSource
 from securelens.scanners.dependencies.manifests import (
     merge,
     parse_composer_lock,

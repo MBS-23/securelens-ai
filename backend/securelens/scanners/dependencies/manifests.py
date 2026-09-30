@@ -75,7 +75,7 @@ def parse_pyproject(path: str, text: str) -> ParsedManifest:
         for spec in specs or []:
             if (rec := _pep508(spec, path, dev=group.lower() in _DEV_GROUPS)) is not None:
                 out.records.append(rec)
-    for group, specs in (data.get("dependency-groups", {}) or {}).items():
+    for specs in (data.get("dependency-groups", {}) or {}).values():
         for spec in specs or []:
             if isinstance(spec, str) and (rec := _pep508(spec, path, dev=True)) is not None:
                 out.records.append(rec)
@@ -88,7 +88,7 @@ def parse_pyproject(path: str, text: str) -> ParsedManifest:
         for name, spec in deps.items():
             if name.lower() == "python":
                 continue
-            constraint = spec if isinstance(spec, str) else (spec or {}).get("version") if isinstance(spec, dict) else None
+            constraint = spec if isinstance(spec, str) else (spec.get("version") if isinstance(spec, dict) else None)
             version = None
             if constraint and re.fullmatch(r"=?=?\s*\d[\w.+!-]*", constraint.strip()):
                 version = constraint.strip().lstrip("=").strip()
@@ -152,13 +152,14 @@ def parse_package_lock(path: str, text: str) -> ParsedManifest:
         root = packages.get("", {})
         direct = set((root.get("dependencies") or {}).keys()) | set((root.get("devDependencies") or {}).keys())
         for key, info in packages.items():
-            if not key or not key.startswith("node_modules/") and "/node_modules/" not in key:
+            if not key or (not key.startswith("node_modules/") and "/node_modules/" not in key):
                 continue
             name = info.get("name") or key.rsplit("node_modules/", 1)[-1]
             if info.get("link"):
                 continue
             out.records.append(DependencyRecord(ecosystem="npm", name=name, version=info.get("version"),
-                                                manifest_path=path, direct=name in direct and key.count("node_modules/") == 1,
+                                                manifest_path=path,
+                                                direct=name in direct and key.count("node_modules/") == 1,
                                                 dev=bool(info.get("dev"))))
         out.direct_names = direct
         return out
@@ -166,7 +167,8 @@ def parse_package_lock(path: str, text: str) -> ParsedManifest:
     def walk(deps: dict, depth: int) -> None:
         for name, info in (deps or {}).items():
             out.records.append(DependencyRecord(ecosystem="npm", name=name, version=(info or {}).get("version"),
-                                                manifest_path=path, direct=depth == 0, dev=bool((info or {}).get("dev"))))
+                                                manifest_path=path, direct=depth == 0,
+                                                dev=bool((info or {}).get("dev"))))
             walk((info or {}).get("dependencies") or {}, depth + 1)
 
     walk(data.get("dependencies") or {}, 0)
@@ -202,7 +204,8 @@ def parse_pnpm_lock(path: str, text: str) -> ParsedManifest:
         if "@" not in spec[1:]:
             continue
         name, _, version = spec.rpartition("@")
-        out.records.append(DependencyRecord(ecosystem="npm", name=name, version=version, manifest_path=path, direct=False))
+        out.records.append(DependencyRecord(ecosystem="npm", name=name, version=version, manifest_path=path,
+                                            direct=False))
     return out
 
 

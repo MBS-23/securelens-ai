@@ -33,7 +33,7 @@ class Engine(StrEnum):
 
 class SourceKind(StrEnum):
     SAST = "SAST"
-    SECRET = "SECRET"
+    SECRET = "SECRET"  # noqa: S105
     DEPENDENCY = "DEPENDENCY"
     AI_CODE = "AI_CODE"  # static analysis of AI-application code
     LLM_TEST = "LLM_TEST"  # dynamic AI security evaluation
@@ -212,7 +212,7 @@ class TestCategory(StrEnum):
 
 
 class TestOutcome(StrEnum):
-    PASS = "PASS"
+    PASS = "PASS"  # noqa: S105
     FAIL = "FAIL"
     INCONCLUSIVE = "INCONCLUSIVE"
     ERROR = "ERROR"
@@ -259,7 +259,7 @@ class ReportFormat(StrEnum):
 
 
 class GateStatus(StrEnum):
-    PASS = "PASS"
+    PASS = "PASS"  # noqa: S105
     FAIL = "FAIL"
 
 

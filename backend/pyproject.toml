@@ -69,6 +69,9 @@ securelens = [
   "evaluation/library/*.yml",
   "findings/catalog.yml",
   "reporting/templates/*.j2",
+  "migrations/*.py",
+  "migrations/*.mako",
+  "migrations/versions/*.py",
   "academy/content/*/*.yml",
   "academy/paths.yml",
   "py.typed",
@@ -80,9 +83,9 @@ addopts = "-q"
 filterwarnings = ["error::DeprecationWarning:securelens.*"]
 
 [tool.ruff]
-line-length = 110
+line-length = 120
 target-version = "py311"
-extend-exclude = ["tests/corpus", "migrations/versions"]
+extend-exclude = ["tests/corpus", "securelens/migrations/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "S", "C4", "SIM", "RUF"]
@@ -93,7 +96,10 @@ ignore = [
   "B008",   # FastAPI dependency injection uses call defaults
   "RUF012",
   "SIM108",
+  "RUF001", "RUF002", "RUF003",  # typographic characters (×, ≥, —) in user-facing text are intended
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S", "B", "E501"]
+# Detection regexes read best on one line each.
+"securelens/scanners/secrets/patterns.py" = ["E501"]
