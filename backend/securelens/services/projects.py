@@ -69,7 +69,10 @@ def update_project(db: Session, principal: Principal, project: Project, body: Pr
     if body.exposure is not None:
         project.exposure = body.exposure
         changes["exposure"] = body.exposure
-    if body.gate_policy is not None:
+    if body.clear_gate_policy:
+        project.gate_policy = None
+        changes["gate_policy"] = None
+    elif body.gate_policy is not None:
         project.gate_policy = body.gate_policy.model_dump(mode="json")
         changes["gate_policy"] = project.gate_policy
     audit.record(db, "project.update", principal=principal, organization_id=project.organization_id,

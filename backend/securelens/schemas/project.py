@@ -41,6 +41,7 @@ class ProjectUpdateIn(APIModel):
     clear_business_criticality: bool = False
     exposure: Exposure | None = None
     gate_policy: GatePolicy | None = None
+    clear_gate_policy: bool = False  # fall back to the organization's default gate
 
 
 class ProjectOut(ORMModel):
