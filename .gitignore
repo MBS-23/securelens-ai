@@ -1,0 +1,28 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+build/
+
+# Node
+node_modules/
+dist/
+test-results/
+playwright-report/
+*.tsbuildinfo
+
+# Runtime data — never commit scan storage, databases or local config
+data/
+*.db
+*.db-journal
+*.sqlite3
+.securelens/
+.env
+.env.*
+!.env.example
