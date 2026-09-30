@@ -33,7 +33,15 @@ docs/       engineering documents
 examples/   deliberately vulnerable demo code for scanning and retest demonstrations
 ```
 
-## Running it locally
+## Quick start
+
+```bash
+git clone https://github.com/MBS-23/securelens-ai.git && cd securelens-ai
+scripts/setup-local.sh      # once (macOS, Linux, or Windows via WSL2)
+scripts/run-local.sh        # dashboard at http://localhost:5173
+```
+
+## Running it locally (manual steps)
 
 Requirements: Python 3.11+, Node 20.19+ (dashboard), PostgreSQL 16 for a server deployment (SQLite works for
 development).

@@ -14,7 +14,7 @@ so no credential-shaped string lives in this repository.
 ## Try it
 
 ```bash
-cd securelens-ai/backend
+cd backend
 pip install -e ".[server,dev]"
 
 # Scan: table output, exit code 1 because the security gate fails

@@ -1,7 +1,7 @@
-diff --git a/securelens-ai/backend/securelens/core/permissions.py b/securelens-ai/backend/securelens/core/permissions.py
+diff --git a/backend/securelens/core/permissions.py b/backend/securelens/core/permissions.py
 index 3ded547..9e5a2e3 100644
---- a/securelens-ai/backend/securelens/core/permissions.py
-+++ b/securelens-ai/backend/securelens/core/permissions.py
+--- a/backend/securelens/core/permissions.py
++++ b/backend/securelens/core/permissions.py
 @@ -1,9 +1,10 @@
  """Role-based access control.
  
@@ -52,10 +52,10 @@ index 3ded547..9e5a2e3 100644
      Role.VIEWER: frozenset(_VIEWER),
      Role.DEVELOPER: frozenset(_DEVELOPER),
      Role.SECURITY_ANALYST: frozenset(_ANALYST),
-diff --git a/securelens-ai/backend/securelens/enums.py b/securelens-ai/backend/securelens/enums.py
+diff --git a/backend/securelens/enums.py b/backend/securelens/enums.py
 index 127a3fd..5652ca4 100644
---- a/securelens-ai/backend/securelens/enums.py
-+++ b/securelens-ai/backend/securelens/enums.py
+--- a/backend/securelens/enums.py
++++ b/backend/securelens/enums.py
 @@ -15,14 +15,16 @@ class Role(StrEnum):
      SECURITY_ANALYST = "SECURITY_ANALYST"
      DEVELOPER = "DEVELOPER"
@@ -135,11 +135,11 @@ index 127a3fd..5652ca4 100644
      NEW = "NEW"
  
  
-diff --git a/securelens-ai/backend/securelens/findings/annotate.py b/securelens-ai/backend/securelens/findings/annotate.py
+diff --git a/backend/securelens/findings/annotate.py b/backend/securelens/findings/annotate.py
 new file mode 100644
 index 0000000..bf7a33b
 --- /dev/null
-+++ b/securelens-ai/backend/securelens/findings/annotate.py
++++ b/backend/securelens/findings/annotate.py
 @@ -0,0 +1,124 @@
 +"""Finding annotation: evidence classes, limitations, taxonomy and provenance.
 +
@@ -265,10 +265,10 @@ index 0000000..bf7a33b
 +        finding.tool_version = tool_version
 +    finding.limitations = limitations_for(finding)
 +    return finding
-diff --git a/securelens-ai/backend/securelens/findings/catalog.py b/securelens-ai/backend/securelens/findings/catalog.py
+diff --git a/backend/securelens/findings/catalog.py b/backend/securelens/findings/catalog.py
 index c76449c..2902fbd 100644
---- a/securelens-ai/backend/securelens/findings/catalog.py
-+++ b/securelens-ai/backend/securelens/findings/catalog.py
+--- a/backend/securelens/findings/catalog.py
++++ b/backend/securelens/findings/catalog.py
 @@ -2,12 +2,15 @@
  
  from __future__ import annotations
@@ -356,10 +356,10 @@ index c76449c..2902fbd 100644
  def get(key: str) -> VulnClass:
      entries = catalog()
      if key not in entries:
-diff --git a/securelens-ai/backend/securelens/findings/catalog.yml b/securelens-ai/backend/securelens/findings/catalog.yml
+diff --git a/backend/securelens/findings/catalog.yml b/backend/securelens/findings/catalog.yml
 index f8150f4..2f3c3b8 100644
---- a/securelens-ai/backend/securelens/findings/catalog.yml
-+++ b/securelens-ai/backend/securelens/findings/catalog.yml
+--- a/backend/securelens/findings/catalog.yml
++++ b/backend/securelens/findings/catalog.yml
 @@ -1,17 +1,25 @@
  # SecureLens vulnerability catalog.
  #
@@ -902,10 +902,10 @@ index f8150f4..2f3c3b8 100644
    severity: MEDIUM
    description: The HTTP server or handler lacks resource limits — no read/header timeouts, or request bodies read without a size cap.
    impact: Denial of service through slow clients (Slowloris) or oversized requests that exhaust memory.
-diff --git a/securelens-ai/backend/securelens/findings/model.py b/securelens-ai/backend/securelens/findings/model.py
+diff --git a/backend/securelens/findings/model.py b/backend/securelens/findings/model.py
 index 1a76dfe..fcce289 100644
---- a/securelens-ai/backend/securelens/findings/model.py
-+++ b/securelens-ai/backend/securelens/findings/model.py
+--- a/backend/securelens/findings/model.py
++++ b/backend/securelens/findings/model.py
 @@ -3,7 +3,10 @@
  Both the Application Security Engine and the AI Security Engine emit
  ``Finding`` objects. Severity, confidence and verification are independent
@@ -967,10 +967,10 @@ index 1a76dfe..fcce289 100644
  
      def sort_key(self) -> tuple:
          loc = self.location
-diff --git a/securelens-ai/backend/securelens/scanners/dependencies/scanner.py b/securelens-ai/backend/securelens/scanners/dependencies/scanner.py
+diff --git a/backend/securelens/scanners/dependencies/scanner.py b/backend/securelens/scanners/dependencies/scanner.py
 index be6a2c0..a347160 100644
---- a/securelens-ai/backend/securelens/scanners/dependencies/scanner.py
-+++ b/securelens-ai/backend/securelens/scanners/dependencies/scanner.py
+--- a/backend/securelens/scanners/dependencies/scanner.py
++++ b/backend/securelens/scanners/dependencies/scanner.py
 @@ -116,10 +116,9 @@ def _finding(dep: DependencyRecord, adv, manifest_lines: dict[str, list[str]]) -
          title=title,
          category=vc.name,
@@ -983,10 +983,10 @@ index be6a2c0..a347160 100644
          location=location,
          evidence=[Evidence(
              kind="dependency",
-diff --git a/securelens-ai/backend/securelens/scanners/engine.py b/securelens-ai/backend/securelens/scanners/engine.py
+diff --git a/backend/securelens/scanners/engine.py b/backend/securelens/scanners/engine.py
 index 345f2af..e00233d 100644
---- a/securelens-ai/backend/securelens/scanners/engine.py
-+++ b/securelens-ai/backend/securelens/scanners/engine.py
+--- a/backend/securelens/scanners/engine.py
++++ b/backend/securelens/scanners/engine.py
 @@ -14,6 +14,7 @@ from pathlib import Path
  
  from securelens.enums import Engine
@@ -1012,10 +1012,10 @@ index 345f2af..e00233d 100644
          f.fingerprint = fingerprint.compute(f)
      # Two correlated groups can still share a fingerprint (same line text in one function); keep the stronger one.
      unique: dict[str, Finding] = {}
-diff --git a/securelens-ai/backend/securelens/scanners/external.py b/securelens-ai/backend/securelens/scanners/external.py
+diff --git a/backend/securelens/scanners/external.py b/backend/securelens/scanners/external.py
 index a3ee4cd..9e2a786 100644
---- a/securelens-ai/backend/securelens/scanners/external.py
-+++ b/securelens-ai/backend/securelens/scanners/external.py
+--- a/backend/securelens/scanners/external.py
++++ b/backend/securelens/scanners/external.py
 @@ -72,8 +72,7 @@ def _finding(*, tool: str, rule_id: str, vuln_class: str, title: str, message: s
          severity=severity,
          confidence=confidence,
@@ -1026,10 +1026,10 @@ index a3ee4cd..9e2a786 100644
          location=location,
          evidence=[Evidence(kind="scanner_output", source=tool, summary=redact_text(message, path) or message,
                             location=location, data=extra)],
-diff --git a/securelens-ai/backend/securelens/scanners/sast/rules/c.yml b/securelens-ai/backend/securelens/scanners/sast/rules/c.yml
+diff --git a/backend/securelens/scanners/sast/rules/c.yml b/backend/securelens/scanners/sast/rules/c.yml
 index 3346f27..242642f 100644
---- a/securelens-ai/backend/securelens/scanners/sast/rules/c.yml
-+++ b/securelens-ai/backend/securelens/scanners/sast/rules/c.yml
+--- a/backend/securelens/scanners/sast/rules/c.yml
++++ b/backend/securelens/scanners/sast/rules/c.yml
 @@ -67,6 +67,7 @@ sinks:
      source_kinds: [user_input, http]
    - id: SL-C-OOB-001
@@ -1046,10 +1046,10 @@ index 3346f27..242642f 100644
      title: Array index derived from untrusted input
      message: An array is indexed with a value derived from input; no bounds check could be established
      severity: HIGH
-diff --git a/securelens-ai/backend/securelens/scanners/sast/rules/php.yml b/securelens-ai/backend/securelens/scanners/sast/rules/php.yml
+diff --git a/backend/securelens/scanners/sast/rules/php.yml b/backend/securelens/scanners/sast/rules/php.yml
 index a3149ba..d4534ae 100644
---- a/securelens-ai/backend/securelens/scanners/sast/rules/php.yml
-+++ b/securelens-ai/backend/securelens/scanners/sast/rules/php.yml
+--- a/backend/securelens/scanners/sast/rules/php.yml
++++ b/backend/securelens/scanners/sast/rules/php.yml
 @@ -197,6 +197,7 @@ sinks:
      cwe: [CWE-256]
    - id: SL-PHP-AUTHZ-001
@@ -1058,10 +1058,10 @@ index a3149ba..d4534ae 100644
      title: Record fetched by a client-supplied identifier without an ownership check
      message: A model is loaded by an identifier from the request and the code does not reference the current user
      severity: MEDIUM
-diff --git a/securelens-ai/backend/securelens/scanners/sast/rules/python.yml b/securelens-ai/backend/securelens/scanners/sast/rules/python.yml
+diff --git a/backend/securelens/scanners/sast/rules/python.yml b/backend/securelens/scanners/sast/rules/python.yml
 index 42f66b1..8454a1e 100644
---- a/securelens-ai/backend/securelens/scanners/sast/rules/python.yml
-+++ b/securelens-ai/backend/securelens/scanners/sast/rules/python.yml
+--- a/backend/securelens/scanners/sast/rules/python.yml
++++ b/backend/securelens/scanners/sast/rules/python.yml
 @@ -262,6 +262,7 @@ sinks:
    # --- authorization ------------------------------------------------------
    - id: SL-PY-AUTHZ-001
@@ -1070,10 +1070,10 @@ index 42f66b1..8454a1e 100644
      title: Record fetched by a client-supplied identifier without an ownership check
      message: An object is loaded using an identifier from the request and the handler does not reference the current user, which may allow insecure direct object references (IDOR)
      severity: MEDIUM
-diff --git a/securelens-ai/backend/securelens/scanners/sast/scanner.py b/securelens-ai/backend/securelens/scanners/sast/scanner.py
+diff --git a/backend/securelens/scanners/sast/scanner.py b/backend/securelens/scanners/sast/scanner.py
 index f99ac1b..0ba6e24 100644
---- a/securelens-ai/backend/securelens/scanners/sast/scanner.py
-+++ b/securelens-ai/backend/securelens/scanners/sast/scanner.py
+--- a/backend/securelens/scanners/sast/scanner.py
++++ b/backend/securelens/scanners/sast/scanner.py
 @@ -89,8 +89,12 @@ def convert(raw: RawFinding, lines: dict[str, list[str]]) -> Finding:
      vc = catalog.get(raw.vuln_class)
      base = catalog.get(raw.base_class) if raw.base_class and raw.base_class != raw.vuln_class and catalog.known(
@@ -1098,10 +1098,10 @@ index f99ac1b..0ba6e24 100644
          location=location,
          evidence=evidence,
          description=f"{raw.message} {vc.description}".strip(),
-diff --git a/securelens-ai/backend/securelens/scanners/secrets/scanner.py b/securelens-ai/backend/securelens/scanners/secrets/scanner.py
+diff --git a/backend/securelens/scanners/secrets/scanner.py b/backend/securelens/scanners/secrets/scanner.py
 index ec0ff25..21599f0 100644
---- a/securelens-ai/backend/securelens/scanners/secrets/scanner.py
-+++ b/securelens-ai/backend/securelens/scanners/secrets/scanner.py
+--- a/backend/securelens/scanners/secrets/scanner.py
++++ b/backend/securelens/scanners/secrets/scanner.py
 @@ -49,7 +49,6 @@ class SecretsScanner:
                      confidence=match.confidence,
                      exploitability=Exploitability.LIKELY,
@@ -1110,11 +1110,11 @@ index ec0ff25..21599f0 100644
                      location=location,
                      evidence=[Evidence(
                          kind="secret",
-diff --git a/securelens-ai/backend/securelens/taxonomy/__init__.py b/securelens-ai/backend/securelens/taxonomy/__init__.py
+diff --git a/backend/securelens/taxonomy/__init__.py b/backend/securelens/taxonomy/__init__.py
 new file mode 100644
 index 0000000..7f9b5be
 --- /dev/null
-+++ b/securelens-ai/backend/securelens/taxonomy/__init__.py
++++ b/backend/securelens/taxonomy/__init__.py
 @@ -0,0 +1,380 @@
 +"""Versioned security taxonomies: OWASP Top 10, API Security Top 10, LLM Top 10.
 +
@@ -1496,11 +1496,11 @@ index 0000000..7f9b5be
 +        if not any(reg.cwe_parents.get(cwe_number(c) or -1) == parent for c in cls.cwe):
 +            problems.append(f"{cls.key}: {cls.top10_parent_cwe} is not a verified parent of {list(cls.cwe)}")
 +    return problems
-diff --git a/securelens-ai/backend/securelens/taxonomy/registry.yml b/securelens-ai/backend/securelens/taxonomy/registry.yml
+diff --git a/backend/securelens/taxonomy/registry.yml b/backend/securelens/taxonomy/registry.yml
 new file mode 100644
 index 0000000..0c2954a
 --- /dev/null
-+++ b/securelens-ai/backend/securelens/taxonomy/registry.yml
++++ b/backend/securelens/taxonomy/registry.yml
 @@ -0,0 +1,226 @@
 +# SecureLens taxonomy registry.
 +#

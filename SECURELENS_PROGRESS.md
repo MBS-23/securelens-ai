@@ -1,6 +1,20 @@
 # SecureLens AI — Progress and Continuation Record
 
-Last updated: 2026-09-30 (after the brand and transition work) · Branch: `claude/keen-brahmagupta-n4am7q` · Audit baseline: `afc5425`
+Last updated: 2026-09-30 · Repository: `MBS-23/securelens-ai` (moved out of the portfolio repository, history kept)
+
+## ▶ Resume here
+
+Where the cloud session stopped (credits ending); continue locally with `LOCAL_DEVELOPMENT.md`:
+
+1. `git apply wip/taxonomy-evidence-wip.patch` — the unfinished Phase 1 correctness work (versioned OWASP taxonomy
+   from official CWE lists, evidence classes, limitations, LEARNER role, INCONCLUSIVE). Finish what §3 lists, run
+   `scripts/run-local.sh --test`, commit, delete `wip/`.
+2. Phase 1 remainder: CI workflow for this repository (backend pytest + ruff, frontend typecheck/unit/E2E, build),
+   upgrade vitest to 5 (dev-only advisory GHSA-82fw-gwwq-j7x9), set the tool version to 0.x.
+3. Phase 2 — authentication (§1 roadmap): registration with personal workspace, LEARNER, invitations, password
+   reset, email verification, TOTP MFA, Alembic `0002`, UI (onboarding = mockup screen 2).
+
+Everything else below is the record: audit, decisions, schema, API contracts, tests.
 
 **Start every session here** (cloud or local — for local setup see `LOCAL_DEVELOPMENT.md`). Read, in order: `SECURELENS_MASTER_SPEC.md` (what to build, verbatim),
 `SECURELENS_EXECUTION_PROTOCOL.md` (how to work), this file (where things stand), `README.md`,
@@ -175,6 +189,7 @@ that loop.
 | D5 | The product owner's spec and protocol are stored verbatim in the repository | Continuity across sessions without reinterpretation |
 | D6 | Keep schema-only tables for planned features; never surface them until implemented | Avoids churn in migrations; no fake features |
 | D7 | Brand mark = "Concept 3" (S ribbon around a lens holding `</>`), generated from geometry; the dashboard renders it in 3D (layered SVG + CSS 3D, no WebGL) as the page-transition loader: assemble while loading, open into the page | Product owner's choice; CSS 3D renders instantly (a loader must not wait for a 3D engine); the mark is the only element with depth, motion is capped (real loading + 240 ms) and can be switched off |
+| D9 | SecureLens AI lives in its own repository `MBS-23/securelens-ai`; the portfolio repository is not changed (no portfolio entry) | Product owner's instruction |
 | D8 | The product owner's 15-screen mockup is a reference for flow and layout only (`docs/UX_REFERENCE.md`); its numbers are placeholders and nothing in it counts as implemented | Owner's instruction; keeps "no fake completion" |
 
 ## 3. In-progress work (not committed)

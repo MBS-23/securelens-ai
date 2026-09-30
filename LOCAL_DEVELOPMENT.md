@@ -1,9 +1,20 @@
 # Continuing SecureLens AI locally
 
 Use this when development moves from the cloud session to your own computer
-(for example when cloud credits run out). Everything needed is in the
-repository on branch `claude/keen-brahmagupta-n4am7q`; nothing depends on the
-cloud container.
+(for example when cloud credits run out). Everything needed is in this
+repository (`MBS-23/securelens-ai`); nothing depends on the cloud container.
+
+## Quick start
+
+```bash
+git clone https://github.com/MBS-23/securelens-ai.git
+cd securelens-ai
+scripts/setup-local.sh        # once: venv, packages, private .env.local, database
+scripts/run-local.sh          # API :8000, scan worker, dashboard http://localhost:5173
+scripts/run-local.sh --test   # every test suite
+```
+
+The sections below explain each step.
 
 ## 1. Requirements
 
@@ -18,9 +29,7 @@ cloud container.
 ## 2. Get the code
 
 ```bash
-git clone https://github.com/MBS-23/MBS-23.github.io.git
-cd MBS-23.github.io
-git checkout claude/keen-brahmagupta-n4am7q
+git clone https://github.com/MBS-23/securelens-ai.git
 cd securelens-ai
 ```
 
@@ -62,10 +71,9 @@ elsewhere.
 
 The taxonomy and evidence-class work was not finished in the cloud session. It
 is saved as a patch (16 files, including the new `securelens/taxonomy/`
-package) that applies cleanly to the branch:
+package) that applies cleanly to `main`:
 
 ```bash
-cd securelens-ai
 git apply wip/taxonomy-evidence-wip.patch
 ```
 
@@ -79,9 +87,9 @@ Open a terminal in the repository folder and start Claude Code there (`claude`),
 or use the Claude Desktop app. To keep following along from the Claude app, run
 `claude remote-control` in that folder instead. A good first message:
 
-> Read securelens-ai/SECURELENS_PROGRESS.md, SECURELENS_EXECUTION_PROTOCOL.md,
+> Read SECURELENS_PROGRESS.md, SECURELENS_EXECUTION_PROTOCOL.md,
 > SECURELENS_MASTER_SPEC.md and LOCAL_DEVELOPMENT.md, apply the WIP patch, and
-> continue Phase 1 from where the progress file says it stopped.
+> continue from the "Resume here" section of the progress file.
 
 ## 7. Optional: regenerate brand assets
 

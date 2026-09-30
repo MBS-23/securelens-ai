@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-PACKAGE_SPEC = ("securelens-ai @ git+https://github.com/MBS-23/MBS-23.github.io.git"
-                "#subdirectory=securelens-ai/backend")
+PACKAGE_SPEC = "securelens-ai @ git+https://github.com/MBS-23/securelens-ai.git#subdirectory=backend"
 
 GITHUB_WORKFLOW = f"""\
 # SecureLens AI — static application security testing on every push and pull request.

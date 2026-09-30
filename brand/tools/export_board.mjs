@@ -1,5 +1,5 @@
 // Render brand/board/index.html to brand/board/securelens-brand-board.png.
-//   node brand/tools/export_board.mjs      (run from securelens-ai/)
+//   node brand/tools/export_board.mjs      (run from the repository root)
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "../../frontend/node_modules/playwright/index.mjs";

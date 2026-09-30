@@ -1,5 +1,5 @@
 // Rasterise the SecureLens SVGs with the dashboard's Playwright Chromium.
-//   node brand/tools/export_png.mjs        (run from securelens-ai/)
+//   node brand/tools/export_png.mjs        (run from the repository root)
 // Writes brand/png/* and the dashboard's favicon, touch icon and PWA icons.
 import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
